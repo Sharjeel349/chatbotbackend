@@ -1,0 +1,163 @@
+language,gender_context,category,student_statement
+English,Male,Academic Issues,I failed PF and OOP both and I need time to prepare again.
+Urdu,Female,Academic Issues,"Currently, my cgpa dropped badly and i want to freeze semester to recover."
+Mixed,Neutral,Academic Issues,I dropped many courses and now I am confused what to enroll next. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Academic Issues,DSA is too hard for me and I need a break to improve basics.
+Urdu,Female,Academic Issues,"Currently, credit hours overload ho gaye hain aur handle nahi ho raha."
+Mixed,Neutral,Academic Issues,"CGPA below average hai, mujhe samajh nahi aa raha degree complete hogi ya nahi. Is liye semester freeze request kar raha/rahi hoon."
+English,Male,Financial Issues,My fee is unpaid and family income suddenly stopped.
+Urdu,Female,Financial Issues,"Currently, abbu ki job chali gayi hai is liye semester freeze chahiye."
+Mixed,Neutral,Financial Issues,I lost my scholarship and cannot afford this semester. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Financial Issues,Late fee fine lag gaya hai aur arrange nahi ho raha.
+Urdu,Female,Financial Issues,"Currently, main temporary full time job kar raha hoon to support family."
+Mixed,Neutral,Personal/Family Issues,Family pressure hai ke main degree chor doon. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Personal/Family Issues,Meri shaadi fix ho gayi hai aur relocation ho rahi hai.
+Urdu,Female,Personal/Family Issues,"Currently, hostel band ho gaya aur transport ka issue hai."
+Mixed,Neutral,Personal/Family Issues,Ghar walay business sambhalne ko keh rahe hain. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Personal/Family Issues,Mother bohat sick hain aur unka khayal rakhna hai.
+Urdu,Female,Medical Issues,"Currently, i had surgery and doctor ne complete rest kaha hai."
+Mixed,Neutral,Medical Issues,Accident hua hai aur physiotherapy chal rahi hai. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Medical Issues,Chronic pain ki wajah se classes attend nahi ho rahi.
+Urdu,Female,Medical Issues,"Currently, medical condition ki wajah se campus ana possible nahi."
+Mixed,Neutral,Mental Health,Severe burnout ho gaya hai aur focus nahi ban raha. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Mental Health,Anxiety attacks ki wajah se studies disturb ho rahi hain.
+Urdu,Female,Mental Health,"Currently, depression ki wajah se classes miss ho rahi hain."
+Mixed,Neutral,Mental Health,Mentally bohat exhausted feel kar raha hoon. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Administrative Issues,Timetable clash hai aur meri classes manage nahi ho rahi.
+Urdu,Female,Administrative Issues,"Currently, mujhe 4pm ke baad class attend karna possible nahi."
+Mixed,Neutral,Administrative Issues,Degree extension ka issue hai aur guidance chahiye. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Administrative Issues,Teacher change request process clear nahi hai.
+Urdu,Female,Administrative Issues,"Currently, semester freeze policy properly samajh nahi aa rahi."
+Mixed,Neutral,Gender-Specific Responsibilities,Father hospital mein hain aur mujhe ghar sambhalna hai. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Gender-Specific Responsibilities,Family business sambhalna par raha hai temporarily.
+Urdu,Female,Gender-Specific Responsibilities,"Currently, pregnancy ki wajah se semester continue nahi kar sakti."
+Mixed,Neutral,Gender-Specific Responsibilities,Childcare ki wajah se classes attend nahi ho pa rahi. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Gender-Specific Responsibilities,Safety issues ki wajah se campus travel possible nahi.
+Urdu,Female,Academic Issues,"Currently, i failed pf and oop both and i need time to prepare again."
+Mixed,Neutral,Academic Issues,My CGPA dropped badly and I want to freeze semester to recover. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Academic Issues,I dropped many courses and now I am confused what to enroll next.
+Urdu,Female,Academic Issues,"Currently, dsa is too hard for me and i need a break to improve basics."
+Mixed,Neutral,Academic Issues,Credit hours overload ho gaye hain aur handle nahi ho raha. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Academic Issues,"CGPA below average hai, mujhe samajh nahi aa raha degree complete hogi ya nahi."
+Urdu,Female,Financial Issues,"Currently, my fee is unpaid and family income suddenly stopped."
+Mixed,Neutral,Financial Issues,Abbu ki job chali gayi hai is liye semester freeze chahiye. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Financial Issues,I lost my scholarship and cannot afford this semester.
+Urdu,Female,Financial Issues,"Currently, late fee fine lag gaya hai aur arrange nahi ho raha."
+Mixed,Neutral,Financial Issues,Main temporary full time job kar raha hoon to support family. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Personal/Family Issues,Family pressure hai ke main degree chor doon.
+Urdu,Female,Personal/Family Issues,"Currently, meri shaadi fix ho gayi hai aur relocation ho rahi hai."
+Mixed,Neutral,Personal/Family Issues,Hostel band ho gaya aur transport ka issue hai. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Personal/Family Issues,Ghar walay business sambhalne ko keh rahe hain.
+Urdu,Female,Personal/Family Issues,"Currently, mother bohat sick hain aur unka khayal rakhna hai."
+Mixed,Neutral,Medical Issues,I had surgery and doctor ne complete rest kaha hai. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Medical Issues,Accident hua hai aur physiotherapy chal rahi hai.
+Urdu,Female,Medical Issues,"Currently, chronic pain ki wajah se classes attend nahi ho rahi."
+Mixed,Neutral,Medical Issues,Medical condition ki wajah se campus ana possible nahi. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Mental Health,Severe burnout ho gaya hai aur focus nahi ban raha.
+Urdu,Female,Mental Health,"Currently, anxiety attacks ki wajah se studies disturb ho rahi hain."
+Mixed,Neutral,Mental Health,Depression ki wajah se classes miss ho rahi hain. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Mental Health,Mentally bohat exhausted feel kar raha hoon.
+Urdu,Female,Administrative Issues,"Currently, timetable clash hai aur meri classes manage nahi ho rahi."
+Mixed,Neutral,Administrative Issues,Mujhe 4pm ke baad class attend karna possible nahi. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Administrative Issues,Degree extension ka issue hai aur guidance chahiye.
+Urdu,Female,Administrative Issues,"Currently, teacher change request process clear nahi hai."
+Mixed,Neutral,Administrative Issues,Semester freeze policy properly samajh nahi aa rahi. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Gender-Specific Responsibilities,Father hospital mein hain aur mujhe ghar sambhalna hai.
+Urdu,Female,Gender-Specific Responsibilities,"Currently, family business sambhalna par raha hai temporarily."
+Mixed,Neutral,Gender-Specific Responsibilities,Pregnancy ki wajah se semester continue nahi kar sakti. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Gender-Specific Responsibilities,Childcare ki wajah se classes attend nahi ho pa rahi.
+Urdu,Female,Gender-Specific Responsibilities,"Currently, safety issues ki wajah se campus travel possible nahi."
+Mixed,Neutral,Academic Issues,I failed PF and OOP both and I need time to prepare again. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Academic Issues,My CGPA dropped badly and I want to freeze semester to recover.
+Urdu,Female,Academic Issues,"Currently, i dropped many courses and now i am confused what to enroll next."
+Mixed,Neutral,Academic Issues,DSA is too hard for me and I need a break to improve basics. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Academic Issues,Credit hours overload ho gaye hain aur handle nahi ho raha.
+Urdu,Female,Academic Issues,"Currently, cgpa below average hai, mujhe samajh nahi aa raha degree complete hogi ya nahi."
+Mixed,Neutral,Financial Issues,My fee is unpaid and family income suddenly stopped. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Financial Issues,Abbu ki job chali gayi hai is liye semester freeze chahiye.
+Urdu,Female,Financial Issues,"Currently, i lost my scholarship and cannot afford this semester."
+Mixed,Neutral,Financial Issues,Late fee fine lag gaya hai aur arrange nahi ho raha. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Financial Issues,Main temporary full time job kar raha hoon to support family.
+Urdu,Female,Personal/Family Issues,"Currently, family pressure hai ke main degree chor doon."
+Mixed,Neutral,Personal/Family Issues,Meri shaadi fix ho gayi hai aur relocation ho rahi hai. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Personal/Family Issues,Hostel band ho gaya aur transport ka issue hai.
+Urdu,Female,Personal/Family Issues,"Currently, ghar walay business sambhalne ko keh rahe hain."
+Mixed,Neutral,Personal/Family Issues,Mother bohat sick hain aur unka khayal rakhna hai. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Medical Issues,I had surgery and doctor ne complete rest kaha hai.
+Urdu,Female,Medical Issues,"Currently, accident hua hai aur physiotherapy chal rahi hai."
+Mixed,Neutral,Medical Issues,Chronic pain ki wajah se classes attend nahi ho rahi. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Medical Issues,Medical condition ki wajah se campus ana possible nahi.
+Urdu,Female,Mental Health,"Currently, severe burnout ho gaya hai aur focus nahi ban raha."
+Mixed,Neutral,Mental Health,Anxiety attacks ki wajah se studies disturb ho rahi hain. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Mental Health,Depression ki wajah se classes miss ho rahi hain.
+Urdu,Female,Mental Health,"Currently, mentally bohat exhausted feel kar raha hoon."
+Mixed,Neutral,Administrative Issues,Timetable clash hai aur meri classes manage nahi ho rahi. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Administrative Issues,Mujhe 4pm ke baad class attend karna possible nahi.
+Urdu,Female,Administrative Issues,"Currently, degree extension ka issue hai aur guidance chahiye."
+Mixed,Neutral,Administrative Issues,Teacher change request process clear nahi hai. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Administrative Issues,Semester freeze policy properly samajh nahi aa rahi.
+Urdu,Female,Gender-Specific Responsibilities,"Currently, father hospital mein hain aur mujhe ghar sambhalna hai."
+Mixed,Neutral,Gender-Specific Responsibilities,Family business sambhalna par raha hai temporarily. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Gender-Specific Responsibilities,Pregnancy ki wajah se semester continue nahi kar sakti.
+Urdu,Female,Gender-Specific Responsibilities,"Currently, childcare ki wajah se classes attend nahi ho pa rahi."
+Mixed,Neutral,Gender-Specific Responsibilities,Safety issues ki wajah se campus travel possible nahi. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Academic Issues,I failed PF and OOP both and I need time to prepare again.
+Urdu,Female,Academic Issues,"Currently, my cgpa dropped badly and i want to freeze semester to recover."
+Mixed,Neutral,Academic Issues,I dropped many courses and now I am confused what to enroll next. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Academic Issues,DSA is too hard for me and I need a break to improve basics.
+Urdu,Female,Academic Issues,"Currently, credit hours overload ho gaye hain aur handle nahi ho raha."
+Mixed,Neutral,Academic Issues,"CGPA below average hai, mujhe samajh nahi aa raha degree complete hogi ya nahi. Is liye semester freeze request kar raha/rahi hoon."
+English,Male,Financial Issues,My fee is unpaid and family income suddenly stopped.
+Urdu,Female,Financial Issues,"Currently, abbu ki job chali gayi hai is liye semester freeze chahiye."
+Mixed,Neutral,Financial Issues,I lost my scholarship and cannot afford this semester. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Financial Issues,Late fee fine lag gaya hai aur arrange nahi ho raha.
+Urdu,Female,Financial Issues,"Currently, main temporary full time job kar raha hoon to support family."
+Mixed,Neutral,Personal/Family Issues,Family pressure hai ke main degree chor doon. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Personal/Family Issues,Meri shaadi fix ho gayi hai aur relocation ho rahi hai.
+Urdu,Female,Personal/Family Issues,"Currently, hostel band ho gaya aur transport ka issue hai."
+Mixed,Neutral,Personal/Family Issues,Ghar walay business sambhalne ko keh rahe hain. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Personal/Family Issues,Mother bohat sick hain aur unka khayal rakhna hai.
+Urdu,Female,Medical Issues,"Currently, i had surgery and doctor ne complete rest kaha hai."
+Mixed,Neutral,Medical Issues,Accident hua hai aur physiotherapy chal rahi hai. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Medical Issues,Chronic pain ki wajah se classes attend nahi ho rahi.
+Urdu,Female,Medical Issues,"Currently, medical condition ki wajah se campus ana possible nahi."
+Mixed,Neutral,Mental Health,Severe burnout ho gaya hai aur focus nahi ban raha. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Mental Health,Anxiety attacks ki wajah se studies disturb ho rahi hain.
+Urdu,Female,Mental Health,"Currently, depression ki wajah se classes miss ho rahi hain."
+Mixed,Neutral,Mental Health,Mentally bohat exhausted feel kar raha hoon. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Administrative Issues,Timetable clash hai aur meri classes manage nahi ho rahi.
+Urdu,Female,Administrative Issues,"Currently, mujhe 4pm ke baad class attend karna possible nahi."
+Mixed,Neutral,Administrative Issues,Degree extension ka issue hai aur guidance chahiye. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Administrative Issues,Teacher change request process clear nahi hai.
+Urdu,Female,Administrative Issues,"Currently, semester freeze policy properly samajh nahi aa rahi."
+Mixed,Neutral,Gender-Specific Responsibilities,Father hospital mein hain aur mujhe ghar sambhalna hai. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Gender-Specific Responsibilities,Family business sambhalna par raha hai temporarily.
+Urdu,Female,Gender-Specific Responsibilities,"Currently, pregnancy ki wajah se semester continue nahi kar sakti."
+Mixed,Neutral,Gender-Specific Responsibilities,Childcare ki wajah se classes attend nahi ho pa rahi. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Gender-Specific Responsibilities,Safety issues ki wajah se campus travel possible nahi.
+Urdu,Female,Academic Issues,"Currently, i failed pf and oop both and i need time to prepare again."
+Mixed,Neutral,Academic Issues,My CGPA dropped badly and I want to freeze semester to recover. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Academic Issues,I dropped many courses and now I am confused what to enroll next.
+Urdu,Female,Academic Issues,"Currently, dsa is too hard for me and i need a break to improve basics."
+Mixed,Neutral,Academic Issues,Credit hours overload ho gaye hain aur handle nahi ho raha. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Academic Issues,"CGPA below average hai, mujhe samajh nahi aa raha degree complete hogi ya nahi."
+Urdu,Female,Financial Issues,"Currently, my fee is unpaid and family income suddenly stopped."
+Mixed,Neutral,Financial Issues,Abbu ki job chali gayi hai is liye semester freeze chahiye. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Financial Issues,I lost my scholarship and cannot afford this semester.
+Urdu,Female,Financial Issues,"Currently, late fee fine lag gaya hai aur arrange nahi ho raha."
+Mixed,Neutral,Financial Issues,Main temporary full time job kar raha hoon to support family. Is liye semester freeze request kar raha/rahi hoon.
+English,Male,Personal/Family Issues,Family pressure hai ke main degree chor doon.
+Urdu,Female,Personal/Family Issues,"Currently, meri shaadi fix ho gayi hai aur relocation ho rahi hai."
+Mixed,Neutral,Personal/Family Issues,Hostel band ho gaya aur transport ka issue hai. Is liye semester freeze request kar raha/rahi hoon.
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
+,,,
