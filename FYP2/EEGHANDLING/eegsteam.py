@@ -2,15 +2,7 @@ import time
 import psycopg2
 import numpy as np
 from pylsl import StreamInlet, resolve_stream
-
-# Your exact DB Configuration
-DB_CONFIG = {
-    "host": "localhost",
-    "database": "fyp_i",
-    "user": "Sharjeel",
-    "password": "Shamra349",
-    "port": 5432
-}
+from FYP2.core.config import DB_CONFIG
 
 
 def save_to_db(mind_state):
@@ -37,25 +29,39 @@ def save_to_db(mind_state):
 
 
 
-def analyze_30s_data(buffer):
-    """Analyzes the collected 30 seconds of data to determine the state."""
+def analyze_30s_data(buffer, sample_rate=256):
+    """Estimate a coarse state from relative alpha and beta band power.
+
+    This is a research heuristic, not a medical or emotional diagnosis.
+    Production use still needs artifact rejection and per-user calibration.
+    """
     if not buffer:
         return "Neutral"
 
-    data = np.array(buffer)
-
-    # Simple averages (borrowed from your previous logic)
-    # Assuming 4 channels, checking index 1 and 2
-    alpha = np.mean(data[:, 1])
-    beta = np.mean(data[:, 2])
-
-    # Must exactly match your SQL CHECK constraint ('Neutral', 'CALM', 'STRESSED')
-    if beta > 0.7:
-        return "STRESSED"
-    elif alpha > 0.6:
-        return "CALM"
-    else:
+    data = np.asarray(buffer, dtype=float)
+    if data.ndim != 2 or data.shape[0] < sample_rate * 5:
         return "Neutral"
+
+    eeg = data[:, : min(4, data.shape[1])]
+    eeg -= np.mean(eeg, axis=0, keepdims=True)
+    eeg *= np.hanning(eeg.shape[0])[:, None]
+
+    frequencies = np.fft.rfftfreq(eeg.shape[0], d=1 / sample_rate)
+    power = np.mean(np.abs(np.fft.rfft(eeg, axis=0)) ** 2, axis=1)
+
+    def band_power(low, high):
+        mask = (frequencies >= low) & (frequencies < high)
+        return float(np.sum(power[mask]))
+
+    alpha = band_power(8, 13)
+    beta = band_power(13, 30)
+    ratio = beta / max(alpha, 1e-9)
+
+    if ratio > 1.6:
+        return "STRESSED"
+    elif ratio < 0.8:
+        return "CALM"
+    return "Neutral"
 
 
 def main():
@@ -77,10 +83,7 @@ def main():
         # 1. Pull the live sample
         sample, timestamp = inlet.pull_sample()
 
-        # 2. Print data to the console continuously
-        print(f"Streaming Raw Data: {sample}")
-
-        # 3. Add to our buffer for analysis
+        # Avoid logging every raw sample; it is slow and exposes sensitive data.
         buffer.append(sample)
 
         current_time = time.time()

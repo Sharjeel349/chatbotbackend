@@ -1,9 +1,12 @@
 from typing import List
-from FYP.core.database import get_db
-from FYP.models import chat_models
-from FYP.services import chat_service, voice_service
-from fastapi import APIRouter, Depends, UploadFile, File, HTTPException,Form
-from FYP.core.database import get_db
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import StreamingResponse
+
+from FYP2.core.database import get_db
+from FYP2.models import chat_models
+from FYP2.services import chat_service, voice_service
 
 
 router = APIRouter(prefix="/api", tags=["Chat"])
@@ -55,21 +58,44 @@ async def handle_voice_message(
     session_id: int,
     audio_file: UploadFile = File(...),
     emotion: str = Form("NEUTRAL"),
+    stream: bool = Form(False),
     db=Depends(get_db)
 ):
-    # Basic validation
-    if not audio_file.content_type.startswith("audio/"):
+    if not audio_file.content_type or not audio_file.content_type.startswith("audio/"):
         raise HTTPException(status_code=400, detail="File must be an audio format")
 
-    # Read file into memory
     audio_bytes = await audio_file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="Audio file is empty")
+    if len(audio_bytes) > 15 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Audio file must be 15 MB or smaller")
 
-    # Pass to our service
-    response = voice_service.process_voice_chat(
-        session_id=session_id,
-        audio_file_bytes=audio_bytes,
-        emotion=emotion,
-        db_conn=db
-    )
+    # Keep this student ID unchanged for the current prototype.
+    student_id = "2023-ARID-0274"
 
-    return response
+    if stream:
+        events = voice_service.stream_voice_chat(
+            session_id=session_id,
+            audio_file_bytes=audio_bytes,
+            student_id=student_id,
+            db_conn=db,
+        )
+        return StreamingResponse(
+            (voice_service.encode_stream_event(event) for event in events),
+            media_type="application/x-ndjson",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    try:
+        return await run_in_threadpool(
+            voice_service.process_voice_chat,
+            session_id,
+            audio_bytes,
+            db,
+            student_id,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

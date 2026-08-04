@@ -64,11 +64,11 @@ def save_chat_message(session_id: int, sender: str, message_text: str, voice_fil
 
         if new_msg:
             return {
-                "message_id": new_msg[0],
-                "sender": new_msg[1],
-                "message_text": new_msg[2],
-                "timestamp": new_msg[3],
-                "emotion": new_msg[4]
+                "message_id": new_msg["message_id"],
+                "sender": new_msg["sender"],
+                "message_text": new_msg["message_text"],
+                "timestamp": new_msg["timestamp"],
+                "emotion": new_msg["emotion"]
             }
         return None
     except Exception as e:

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
-from FYP.core.database import get_db
-from FYP.models import auth_models
-from FYP.services import auth_service
+from FYP2.core.database import get_db
+from FYP2.models import auth_models
+from FYP2.services import auth_service
 
 router = APIRouter(prefix="/api/auth", tags=["Auth"])
 

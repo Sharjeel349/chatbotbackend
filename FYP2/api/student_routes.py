@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Depends
 from typing import List
-from FYP.core.database import get_db
-from FYP.models import academic_models
-from FYP.services import student_service
+from FYP2.core.database import get_db
+from FYP2.models import academic_models
+from FYP2.services import student_service
 
 router = APIRouter(prefix="/api/student", tags=["Student"])
 

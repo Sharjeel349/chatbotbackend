@@ -1,0 +1,13 @@
+.DS_Store
+.idea/
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+
+.env
+FYP2/.env
+FYP2/chroma_db/
+FYP2/model_cache/
+FYP2/static/audio/*
+!FYP2/static/audio/.gitkeep
