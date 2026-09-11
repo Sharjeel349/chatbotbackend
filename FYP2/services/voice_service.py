@@ -52,12 +52,99 @@ def encode_stream_event(event: dict[str, Any]) -> bytes:
     return (json.dumps(event, ensure_ascii=False, default=str) + "\n").encode("utf-8")
 
 
+ROMAN_URDU_KEYWORDS = {
+    "mera", "meri", "mere", "apna", "apni", "apne", "aap", "ka", "ki", "ke",
+    "ko", "se", "mein", "par", "hai", "hain", "ho", "hu", "hoon", "tha", "thi",
+    "the", "kya", "kia", "kaisa", "kaisi", "kaise", "kitna", "kitni", "kitne",
+    "batao", "bataen", "bataey", "batai", "mujhe", "sunao", "karna", "karne",
+    "bhi", "nahi", "nahin", "sir", "madam", "pas", "pass", "fail"
+}
+
+URDU_WORD_MAP = {
+    "میرا": "Mera", "میری": "Meri", "میرے": "Mere", "اپنا": "Apna", "اپنے": "Apne", "اپنی": "Apni",
+    "کتنا": "kitna", "کتنی": "kitni", "کتنے": "kitne", "کیا": "kya", "کون": "kon", "کونسا": "konsa",
+    "سی": "CGPA", "جی": "GPA", "پی": "P", "اے": "A",
+    "سی جی پی اے": "CGPA", "جی پی اے": "GPA", "ہے": "hai", "ہیں": "hain", "ہو": "ho", "ہوں": "hoon",
+    "تھا": "tha", "تھی": "thi", "تھے": "the",
+    "کیسا": "kaisa", "کیسی": "kaisi", "کیسے": "kaise", "رزلٹ": "result", "مارکس": "marks",
+    "سمسٹر": "semester", "کورس": "course", "کورسز": "courses", "پروگرامنگ": "programming",
+    "گریڈ": "grade", "گریڈز": "grades", "فیل": "fail", "پاس": "pass", "ٹیچر": "teacher",
+    "استاد": "teacher", "مشیر": "advisor", "ایڈوائزر": "advisor", "مجھے": "mujhe",
+    "بتاو": "batao", "بتائیں": "batain", "نام": "naam", "تفصیل": "detail", "تفصیلات": "details",
+    "معلومات": "information", "پرفارمنس": "performance", "کارکردگی": "performance",
+    "ہم": "hum", "آپ": "Aap", "تم": "tum", "وہ": "woh", "سبجیکٹ": "subject", "سبجیکٹس": "subjects",
+}
+
+URDU_CHAR_MAP = {
+    'ا': 'a', 'آ': 'aa', 'ب': 'b', 'پ': 'p', 'ت': 't', 'ٹ': 't', 'ث': 's',
+    'ج': 'j', 'چ': 'ch', 'ح': 'h', 'خ': 'kh', 'د': 'd', 'ڈ': 'd', 'ذ': 'z',
+    'ر': 'r', 'ڑ': 'r', 'ز': 'z', 'ژ': 'z', 'س': 's', 'ش': 'sh', 'ص': 's',
+    'ض': 'z', 'ط': 't', 'ظ': 'z', 'ع': 'a', 'غ': 'gh', 'ف': 'f', 'ق': 'q',
+    'ک': 'k', 'گ': 'g', 'ل': 'l', 'م': 'm', 'ن': 'n', 'ں': 'n', 'و': 'o',
+    'ہ': 'h', 'ھ': 'h', 'ء': 'a', 'ی': 'y', 'ے': 'ey', '۰': '0', '۱': '1',
+    '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9'
+}
+
+
 def contains_urdu_script(text: str) -> bool:
     return any(start <= char <= end for char in text for start, end in URDU_SCRIPT_RANGES)
 
 
+def character_transliterate_urdu(word: str) -> str:
+    return "".join(URDU_CHAR_MAP.get(char, char) for char in word)
+
+
+def dictionary_transliterate_urdu(text: str) -> str:
+    words = text.split()
+    converted_words = []
+    for word in words:
+        clean = word.strip("،.؟!?")
+        if clean in URDU_WORD_MAP:
+            converted_words.append(URDU_WORD_MAP[clean])
+        elif contains_urdu_script(clean):
+            converted_words.append(character_transliterate_urdu(clean))
+        else:
+            converted_words.append(word)
+    return " ".join(converted_words)
+
+
+def convert_to_roman_urdu_offline(text: str) -> str:
+    if not text or not contains_urdu_script(text):
+        return text
+
+    dict_converted = dictionary_transliterate_urdu(text)
+    if not contains_urdu_script(dict_converted):
+        return dict_converted
+
+    prompt = (
+        "Convert the following Urdu script text into simple natural Pakistani Roman Urdu using Latin alphabet only. "
+        "Keep terms like CGPA, GPA, semester, course, programming, advisor in English script. "
+        "Output ONLY the converted Roman Urdu sentence without any quote or explanation:\n\n"
+        f"Urdu: {text}\nRoman Urdu:"
+    )
+    try:
+        payload = {
+            "model": OLLAMA_MODEL_ROMAN_URDU,
+            "prompt": prompt,
+            "stream": False,
+            "options": {"temperature": 0.1, "num_predict": 40},
+        }
+        res = requests.post(OLLAMA_URL, json=payload, timeout=(3.0, 15.0))
+        if res.status_code == 200:
+            converted = res.json().get("response", "").strip().strip('"')
+            if converted and not contains_urdu_script(converted):
+                return converted
+    except requests.exceptions.RequestException:
+        logger.warning("Local Ollama Roman Urdu transliteration timed out or skipped; using dictionary fallback")
+
+    return dict_converted
+
+
 def response_language(language_code: str, transcript: str) -> str:
     if language_code.lower() in URDU_LANGUAGE_CODES or contains_urdu_script(transcript):
+        return "roman_urdu"
+    words = set(re.findall(r"[a-z]+", transcript.casefold()))
+    if len(words & ROMAN_URDU_KEYWORDS) >= 1:
         return "roman_urdu"
     return "english"
 
@@ -95,7 +182,27 @@ def warm_up_models() -> None:
 def _transcribe(audio_path: Path) -> tuple[str, str]:
     with _stt_lock:
         backend, model = get_stt_model()
+        initial_prompt = (
+            "Mera kitna CGPA hai, mera result kaisa hai, programming courses performance, "
+            "advisor name, fail courses, semester freeze."
+        )
         if backend == "faster-whisper":
+            try:
+                segments, info = model.transcribe(
+                    str(audio_path),
+                    language="ur",
+                    beam_size=1,
+                    temperature=0,
+                    condition_on_previous_text=False,
+                    vad_filter=True,
+                    vad_parameters={"min_silence_duration_ms": 400},
+                )
+                text = " ".join(segment.text.strip() for segment in segments).strip()
+                if text:
+                    return text, "ur"
+            except Exception:
+                logger.exception("faster-whisper urdu attempt failed")
+
             segments, info = model.transcribe(
                 str(audio_path),
                 beam_size=1,
@@ -103,9 +210,26 @@ def _transcribe(audio_path: Path) -> tuple[str, str]:
                 condition_on_previous_text=False,
                 vad_filter=True,
                 vad_parameters={"min_silence_duration_ms": 400},
+                initial_prompt=initial_prompt,
             )
             text = " ".join(segment.text.strip() for segment in segments).strip()
             return text, info.language or "en"
+
+        try:
+            result = model.transcribe(
+                str(audio_path),
+                language="ur",
+                fp16=False,
+                temperature=0,
+                beam_size=1,
+                condition_on_previous_text=False,
+                verbose=False,
+            )
+            text = result.get("text", "").strip()
+            if text:
+                return text, "ur"
+        except Exception:
+            logger.exception("openai-whisper urdu attempt failed")
 
         result = model.transcribe(
             str(audio_path),
@@ -113,6 +237,7 @@ def _transcribe(audio_path: Path) -> tuple[str, str]:
             temperature=0,
             beam_size=1,
             condition_on_previous_text=False,
+            initial_prompt=initial_prompt,
             verbose=False,
         )
         return result.get("text", "").strip(), result.get("language", "en")
@@ -317,6 +442,9 @@ def build_student_context(
             "coding",
             "enroll",
             "overload",
+            "performance",
+            "performing",
+            "kaisa",
             "کورس",
             "سبجیکٹ",
             "پروگرامنگ",
@@ -324,6 +452,7 @@ def build_student_context(
     ):
         context["current_enrollments"] = get_current_enrollments(student_id, db_conn)
         context["failed_courses"] = get_failed_courses(student_id, db_conn)
+        context["transcript"] = get_transcript(student_id, db_conn)
 
     if _mentions(query, {"freeze", "semester", "gap", "فریز", "سمسٹر"}):
         context["freeze_history"] = get_freeze_history(student_id, db_conn)
@@ -334,7 +463,7 @@ def build_student_context(
         context["teacher_statistics"] = get_teacher_strictness_stats(db_conn)
 
     if _mentions(
-        query, {"grade", "transcript", "result", "marks", "گریڈ", "نتیجہ"}
+        query, {"grade", "transcript", "result", "marks", "performance", "performing", "گریڈ", "نتیجہ"}
     ):
         context["transcript"] = get_transcript(student_id, db_conn)
 
@@ -461,8 +590,10 @@ LANGUAGE:
 
 STYLE:
 - Use no more than 3 short conversational sentences.
-- Answer the student's exact question first.
-- Be empathetic but do not add generic filler.
+- Answer the student's exact question directly and first.
+- Do NOT repeat identical sentences or generic templates from previous turns.
+- If asked about course performance or grades, explicitly state specific course titles, grades, or pass/fail records from STUDENT_CONTEXT_JSON.
+- Be empathetic but concise and direct.
 - Never invent a student fact or university rule.
 - If required information is missing, say what is missing.
 
@@ -497,7 +628,7 @@ def stream_llm_reply(prompt: str, model: str) -> Iterator[str]:
         "options": {
             "temperature": 0.2,
             "top_p": 0.9,
-            "num_predict": 90,
+            "num_predict": 160,
             "num_ctx": 4096,
         },
     }
@@ -588,6 +719,11 @@ def stream_voice_chat(
         stage = time.perf_counter()
         yield _event("status", message="Understanding your voice...")
         user_text, detected_language = _transcribe(user_audio_path)
+
+        if contains_urdu_script(user_text) or detected_language in URDU_LANGUAGE_CODES:
+            user_text = convert_to_roman_urdu_offline(user_text)
+            detected_language = "ur"
+
         timings["transcription"] = round((time.perf_counter() - stage) * 1000)
 
         if not user_text:
