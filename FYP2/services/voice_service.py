@@ -17,6 +17,12 @@ import pyttsx3
 import requests
 from pydub import AudioSegment
 
+from FYP2.services.roman_urdu_service import (
+    clean_and_normalize_roman_urdu,
+    contains_urdu_script,
+    transliterate_urdu_to_roman,
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +38,11 @@ OLLAMA_MODEL_ENGLISH = os.getenv("OLLAMA_MODEL_ENGLISH", "gemma2:2b")
 OLLAMA_MODEL_ROMAN_URDU = os.getenv("OLLAMA_MODEL_ROMAN_URDU", "mistral")
 WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 STT_BACKEND = os.getenv("STT_BACKEND", "openai-whisper")
-MAX_HISTORY_MESSAGES = 6
+MAX_HISTORY_MESSAGES = 3
 
 _stt_lock = threading.Lock()
 
 URDU_LANGUAGE_CODES = {"ur", "hi", "pa"}
-URDU_SCRIPT_RANGES = (
-    ("\u0600", "\u06ff"),
-    ("\u0750", "\u077f"),
-    ("\u08a0", "\u08ff"),
-)
 
 
 def _event(event_type: str, **payload: Any) -> dict[str, Any]:
@@ -60,84 +61,23 @@ ROMAN_URDU_KEYWORDS = {
     "bhi", "nahi", "nahin", "sir", "madam", "pas", "pass", "fail"
 }
 
-URDU_WORD_MAP = {
-    "میرا": "Mera", "میری": "Meri", "میرے": "Mere", "اپنا": "Apna", "اپنے": "Apne", "اپنی": "Apni",
-    "کتنا": "kitna", "کتنی": "kitni", "کتنے": "kitne", "کیا": "kya", "کون": "kon", "کونسا": "konsa",
-    "سی": "CGPA", "جی": "GPA", "پی": "P", "اے": "A",
-    "سی جی پی اے": "CGPA", "جی پی اے": "GPA", "ہے": "hai", "ہیں": "hain", "ہو": "ho", "ہوں": "hoon",
-    "تھا": "tha", "تھی": "thi", "تھے": "the",
-    "کیسا": "kaisa", "کیسی": "kaisi", "کیسے": "kaise", "رزلٹ": "result", "مارکس": "marks",
-    "سمسٹر": "semester", "کورس": "course", "کورسز": "courses", "پروگرامنگ": "programming",
-    "گریڈ": "grade", "گریڈز": "grades", "فیل": "fail", "پاس": "pass", "ٹیچر": "teacher",
-    "استاد": "teacher", "مشیر": "advisor", "ایڈوائزر": "advisor", "مجھے": "mujhe",
-    "بتاو": "batao", "بتائیں": "batain", "نام": "naam", "تفصیل": "detail", "تفصیلات": "details",
-    "معلومات": "information", "پرفارمنس": "performance", "کارکردگی": "performance",
-    "ہم": "hum", "آپ": "Aap", "تم": "tum", "وہ": "woh", "سبجیکٹ": "subject", "سبجیکٹس": "subjects",
-}
+def is_hallucination(text: str) -> bool:
+    """Check if Whisper hallucinated repetitive words (e.g. 'ayk ayk ayk...' or 'ایک ایک ایک...')."""
+    words = text.strip().split()
+    if len(words) >= 4:
+        from collections import Counter
 
-URDU_CHAR_MAP = {
-    'ا': 'a', 'آ': 'aa', 'ب': 'b', 'پ': 'p', 'ت': 't', 'ٹ': 't', 'ث': 's',
-    'ج': 'j', 'چ': 'ch', 'ح': 'h', 'خ': 'kh', 'د': 'd', 'ڈ': 'd', 'ذ': 'z',
-    'ر': 'r', 'ڑ': 'r', 'ز': 'z', 'ژ': 'z', 'س': 's', 'ش': 'sh', 'ص': 's',
-    'ض': 'z', 'ط': 't', 'ظ': 'z', 'ع': 'a', 'غ': 'gh', 'ف': 'f', 'ق': 'q',
-    'ک': 'k', 'گ': 'g', 'ل': 'l', 'م': 'm', 'ن': 'n', 'ں': 'n', 'و': 'o',
-    'ہ': 'h', 'ھ': 'h', 'ء': 'a', 'ی': 'y', 'ے': 'ey', '۰': '0', '۱': '1',
-    '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9'
-}
-
-
-def contains_urdu_script(text: str) -> bool:
-    return any(start <= char <= end for char in text for start, end in URDU_SCRIPT_RANGES)
-
-
-def character_transliterate_urdu(word: str) -> str:
-    return "".join(URDU_CHAR_MAP.get(char, char) for char in word)
-
-
-def dictionary_transliterate_urdu(text: str) -> str:
-    words = text.split()
-    converted_words = []
-    for word in words:
-        clean = word.strip("،.؟!?")
-        if clean in URDU_WORD_MAP:
-            converted_words.append(URDU_WORD_MAP[clean])
-        elif contains_urdu_script(clean):
-            converted_words.append(character_transliterate_urdu(clean))
-        else:
-            converted_words.append(word)
-    return " ".join(converted_words)
+        top_word, count = Counter(w.casefold() for w in words).most_common(1)[0]
+        if count / len(words) > 0.5:
+            return True
+        if re.search(r"\b(\w+)(?:\s+\1){3,}\b", text, re.IGNORECASE):
+            return True
+    return False
 
 
 def convert_to_roman_urdu_offline(text: str) -> str:
-    if not text or not contains_urdu_script(text):
-        return text
-
-    dict_converted = dictionary_transliterate_urdu(text)
-    if not contains_urdu_script(dict_converted):
-        return dict_converted
-
-    prompt = (
-        "Convert the following Urdu script text into simple natural Pakistani Roman Urdu using Latin alphabet only. "
-        "Keep terms like CGPA, GPA, semester, course, programming, advisor in English script. "
-        "Output ONLY the converted Roman Urdu sentence without any quote or explanation:\n\n"
-        f"Urdu: {text}\nRoman Urdu:"
-    )
-    try:
-        payload = {
-            "model": OLLAMA_MODEL_ROMAN_URDU,
-            "prompt": prompt,
-            "stream": False,
-            "options": {"temperature": 0.1, "num_predict": 40},
-        }
-        res = requests.post(OLLAMA_URL, json=payload, timeout=(3.0, 15.0))
-        if res.status_code == 200:
-            converted = res.json().get("response", "").strip().strip('"')
-            if converted and not contains_urdu_script(converted):
-                return converted
-    except requests.exceptions.RequestException:
-        logger.warning("Local Ollama Roman Urdu transliteration timed out or skipped; using dictionary fallback")
-
-    return dict_converted
+    """Robust conversion of Urdu script to natural Roman Urdu using roman_urdu_service."""
+    return transliterate_urdu_to_roman(text)
 
 
 def response_language(language_code: str, transcript: str) -> str:
@@ -183,26 +123,10 @@ def _transcribe(audio_path: Path) -> tuple[str, str]:
     with _stt_lock:
         backend, model = get_stt_model()
         initial_prompt = (
-            "Mera kitna CGPA hai, mera result kaisa hai, programming courses performance, "
-            "advisor name, fail courses, semester freeze."
+            "میرا سی جی پی اے کتنا ہے، رزلٹ، کورسز، فیس، سمسٹر، ایڈوائزر، امتحان، داخلہ، "
+            "CGPA, GPA, semester, course, fees, exam, programming, drop, freeze"
         )
         if backend == "faster-whisper":
-            try:
-                segments, info = model.transcribe(
-                    str(audio_path),
-                    language="ur",
-                    beam_size=1,
-                    temperature=0,
-                    condition_on_previous_text=False,
-                    vad_filter=True,
-                    vad_parameters={"min_silence_duration_ms": 400},
-                )
-                text = " ".join(segment.text.strip() for segment in segments).strip()
-                if text:
-                    return text, "ur"
-            except Exception:
-                logger.exception("faster-whisper urdu attempt failed")
-
             segments, info = model.transcribe(
                 str(audio_path),
                 beam_size=1,
@@ -213,23 +137,11 @@ def _transcribe(audio_path: Path) -> tuple[str, str]:
                 initial_prompt=initial_prompt,
             )
             text = " ".join(segment.text.strip() for segment in segments).strip()
-            return text, info.language or "en"
-
-        try:
-            result = model.transcribe(
-                str(audio_path),
-                language="ur",
-                fp16=False,
-                temperature=0,
-                beam_size=1,
-                condition_on_previous_text=False,
-                verbose=False,
-            )
-            text = result.get("text", "").strip()
-            if text:
-                return text, "ur"
-        except Exception:
-            logger.exception("openai-whisper urdu attempt failed")
+            detected_lang = info.language or "en"
+            if is_hallucination(text):
+                logger.warning("Detected Whisper repetition hallucination in text: %s", text)
+                text = ""
+            return text, detected_lang
 
         result = model.transcribe(
             str(audio_path),
@@ -240,7 +152,12 @@ def _transcribe(audio_path: Path) -> tuple[str, str]:
             initial_prompt=initial_prompt,
             verbose=False,
         )
-        return result.get("text", "").strip(), result.get("language", "en")
+        text = result.get("text", "").strip()
+        detected_lang = result.get("language", "en")
+        if is_hallucination(text):
+            logger.warning("Detected Whisper repetition hallucination in text: %s", text)
+            text = ""
+        return text, detected_lang
 
 
 def _safe_rollback(db_conn) -> None:
@@ -321,7 +238,7 @@ def get_transcript(student_id: str, db_conn):
             JOIN Course c ON co.course_id = c.course_id
             WHERE e.student_id = %s AND e.grade IS NOT NULL
             ORDER BY co.session DESC, c.title ASC
-            LIMIT 30;
+            LIMIT 8;
             """,
             (student_id,),
         )
@@ -400,6 +317,8 @@ def get_recent_chat_history(session_id: int, db_conn):
             SELECT sender, message_text
             FROM Chat_Message
             WHERE session_id = %s
+              AND message_text NOT LIKE '%%AI model abhi available nahi hai%%'
+              AND message_text NOT LIKE '%%The AI model is unavailable%%'
             ORDER BY timestamp DESC
             LIMIT %s;
             """,
@@ -483,6 +402,14 @@ def _knowledge_sections() -> list[str]:
     return sections
 
 
+_RETRIEVAL_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from",
+    "have", "has", "how", "i", "if", "in", "is", "it", "me", "my", "of", "on", "or",
+    "the", "to", "what", "when", "where", "which", "who", "why", "will", "with", "you",
+    "kya", "hai", "hain", "ka", "ki", "ke", "ko", "se", "me", "mein", "par",
+}
+
+
 def retrieve_knowledge(query: str) -> str:
     """Retrieve small local rules without loading another native ML runtime.
 
@@ -502,31 +429,83 @@ def retrieve_knowledge(query: str) -> str:
         "گریڈ": "grade",
         "نتیجہ": "result",
         "سی جی پی اے": "cgpa",
+        "حاضری": "attendance",
+        "امتحان": "exam examination",
+        "داخلہ": "admission eligibility",
+        "فیس": "fee installment",
+        "قسط": "installment fee",
+        "نقل": "cheating penalty",
+        "hazri": "attendance",
+        "haziri": "attendance",
+        "chutti": "leave attendance",
+        "dakhla": "admission eligibility",
+        "qist": "installment fee",
+        "qiston": "installment fee",
+        "kist": "installment fee",
+        "imtihan": "exam examination",
+        "paper": "exam examination",
+        "naqal": "cheating penalty",
+        "cheat": "cheating",
     }
     for source, replacement in expansions.items():
         if source in normalized:
             normalized += f" {replacement}"
 
-    query_terms = set(re.findall(r"[a-z0-9]+", normalized))
+    raw_query_terms = set(re.findall(r"[a-z0-9]+", normalized))
+    query_terms = (raw_query_terms - _RETRIEVAL_STOPWORDS) or raw_query_terms
     if not query_terms:
         return ""
 
     ranked: list[tuple[int, str]] = []
     for section in _knowledge_sections():
         section_terms = set(re.findall(r"[a-z0-9]+", section.casefold()))
-        score = len(query_terms & section_terms)
+        heading = section.splitlines()[0].casefold() if section else ""
+        heading_terms = set(re.findall(r"[a-z0-9]+", heading))
+        score = len(query_terms & section_terms) + 2 * len(query_terms & heading_terms)
         if score:
             ranked.append((score, section))
 
     ranked.sort(key=lambda item: item[0], reverse=True)
-    return "\n\n".join(section for _, section in ranked[:3])
+    if not ranked:
+        return ""
+    # Return the single best matching rule, capped at 400 characters to keep prompt fast
+    return ranked[0][1][:400].strip()
 
 
 def direct_database_reply(
     query: str, language: str, context: dict[str, Any]
 ) -> str | None:
     profile = context.get("profile") or {}
-    normalized = query.casefold()
+    normalized = query.casefold().strip()
+
+    # Instant response for greetings (avoids heavy LLM call and unwanted advice)
+    greeting_terms = (
+        "hi", "hello", "hey", "salam", "assalam", "assalam o alaikum",
+        "assalamu alaikum", "aoa", "kaisa hai", "kaise ho", "kese ho",
+        "kia hal hai", "kya hal hai", "good morning", "good afternoon",
+        "good evening", "how are you",
+    )
+    words = re.findall(r"[a-z]+", normalized)
+    is_greeting = False
+    if words and len(words) <= 5:
+        if any(term in normalized for term in greeting_terms):
+            is_greeting = True
+    elif normalized in {"hi", "hello", "hey", "salam", "assalam", "assalam o alaikum"}:
+        is_greeting = True
+
+    if is_greeting:
+        first_name = (profile.get("full_name") or profile.get("name") or "").split()[0]
+        name_suffix = f" {first_name}" if first_name else ""
+        if language == "roman_urdu":
+            return (
+                f"Walekum Assalam{name_suffix}! Main aap ka university academic advisor hoon. "
+                "Aaj main aap ki kya madad kar sakta hoon?"
+            )
+        else:
+            return (
+                f"Hello{name_suffix}! I am your university academic advisor. "
+                "How can I help you today with your courses, GPA, or university policies?"
+            )
 
     if any(
         term in normalized
@@ -575,33 +554,27 @@ def build_prompt(
 ) -> str:
     if language == "roman_urdu":
         language_rule = (
-            "Reply ONLY in natural Pakistani Roman Urdu using English/Latin letters. "
-            "Never use Urdu or Arabic script. Keep common university words such as "
-            "CGPA, course, semester, advisor and programming in English."
+            "CRITICAL LANGUAGE RULE: You MUST reply in conversational Pakistani Roman Urdu using Latin/English alphabet ONLY. "
+            "Do NOT reply in English. Do NOT add English translations in brackets or parentheses. "
+            "(For example: 'Aap ki fees abhi tak jama nahi hui, lekin aap exam mein baith sakte hain.'). "
+            "Never use Urdu or Arabic script. Keep technical university terms like CGPA, GPA, semester, course, fees, exam, and advisor in English."
         )
+        reply_cue = "ADVISOR_REPLY (in Roman Urdu):"
     else:
         language_rule = "Reply only in clear, natural English."
+        reply_cue = "ADVISOR_REPLY:"
 
     return f"""
-You are a careful university academic advisor.
+You are a helpful university academic advisor.
 
 LANGUAGE:
 {language_rule}
 
 STYLE:
-- Use no more than 3 short conversational sentences.
+- Use no more than 2-3 short conversational sentences.
 - Answer the student's exact question directly and first.
-- Do NOT repeat identical sentences or generic templates from previous turns.
-- If asked about course performance or grades, explicitly state specific course titles, grades, or pass/fail records from STUDENT_CONTEXT_JSON.
-- Be empathetic but concise and direct.
+- Do NOT give unsolicited warnings or lectures about workload or grades unless the student specifically asks for evaluation.
 - Never invent a student fact or university rule.
-- If required information is missing, say what is missing.
-
-ADVISING:
-- Warn against programming overload when current or failed programming courses show risk.
-- For teacher comparisons, use both failure and A-grade counts; do not label a teacher unfairly from a tiny sample.
-- The degree limit in the available rules is 12 registered semesters.
-- Treat the EEG state only as a soft tone hint, never as a diagnosis.
 
 STUDENT_CONTEXT_JSON:
 {json.dumps(context, ensure_ascii=False, default=str, separators=(",", ":"))}
@@ -615,7 +588,7 @@ EEG_TONE_HINT:
 STUDENT_MESSAGE:
 {user_text}
 
-ADVISOR_REPLY:
+{reply_cue}
 """.strip()
 
 
@@ -628,15 +601,16 @@ def stream_llm_reply(prompt: str, model: str) -> Iterator[str]:
         "options": {
             "temperature": 0.2,
             "top_p": 0.9,
-            "num_predict": 160,
-            "num_ctx": 4096,
+            "num_predict": 120,
+            "num_ctx": 1536,
+            "num_thread": min(4, os.cpu_count() or 2),
         },
     }
     with requests.post(
         OLLAMA_URL,
         json=payload,
         stream=True,
-        timeout=(5, 90),
+        timeout=(5, 150),
     ) as response:
         response.raise_for_status()
         for line in response.iter_lines():
@@ -720,13 +694,13 @@ def stream_voice_chat(
         yield _event("status", message="Understanding your voice...")
         user_text, detected_language = _transcribe(user_audio_path)
 
-        if contains_urdu_script(user_text) or detected_language in URDU_LANGUAGE_CODES:
-            user_text = convert_to_roman_urdu_offline(user_text)
+        if contains_urdu_script(user_text) or detected_language in URDU_LANGUAGE_CODES or response_language(detected_language, user_text) == "roman_urdu":
+            user_text = clean_and_normalize_roman_urdu(user_text)
             detected_language = "ur"
 
         timings["transcription"] = round((time.perf_counter() - stage) * 1000)
 
-        if not user_text:
+        if not user_text or is_hallucination(user_text):
             user_text = "[No speech detected]"
         language = response_language(detected_language, user_text)
         yield _event(
@@ -772,6 +746,9 @@ def stream_voice_chat(
                         elif not script_violation:
                             yield _event("token", text=token)
                     reply = "".join(chunks).strip()
+                    if language == "roman_urdu":
+                        # Remove any trailing English translation in parentheses
+                        reply = re.sub(r"\s*\([A-Za-z\s,.'’]+\)\s*$", "", reply).strip()
                 except Exception:
                     logger.exception("Ollama generation failed")
                     reply = (

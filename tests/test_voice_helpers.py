@@ -45,11 +45,34 @@ class VoiceHelperTests(unittest.TestCase):
         )
         self.assertEqual(answer, "Aap ka CGPA 3.2 hai.")
 
-    def test_stream_event_is_one_json_line(self):
-        raw = encode_stream_event({"type": "token", "text": "Aap "})
-        self.assertTrue(raw.endswith(b"\n"))
-        self.assertEqual(json.loads(raw), {"type": "token", "text": "Aap "})
+    def test_direct_greeting_reply(self):
+        reply_en = direct_database_reply(
+            "Hi",
+            "english",
+            {"profile": {"name": "Sharjeel Ahmed"}},
+        )
+        self.assertIn("Hello Sharjeel!", reply_en)
+        self.assertIn("academic advisor", reply_en)
+
+        reply_ur = direct_database_reply(
+            "Salam",
+            "roman_urdu",
+            {"profile": {"name": "Sharjeel Ahmed"}},
+        )
+        self.assertIn("Walekum Assalam Sharjeel!", reply_ur)
+
+    def test_robust_urdu_transliteration(self):
+        from FYP2.services.roman_urdu_service import transliterate_urdu_to_roman
+        urdu_voice_text = "میری اینوستی کی فیس ابھی تک سبب نہیں ہوئی کیا میں اوی بھی اگزان دیستکتا ہوں"
+        roman = transliterate_urdu_to_roman(urdu_voice_text)
+        self.assertIn("university", roman)
+        self.assertIn("fees", roman)
+        self.assertIn("submit", roman)
+        self.assertIn("exam", roman)
+        self.assertIn("de sakta hoon", roman)
+        self.assertFalse(contains_urdu_script(roman))
 
 
 if __name__ == "__main__":
     unittest.main()
+

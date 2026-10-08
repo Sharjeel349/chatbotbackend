@@ -1,11 +1,17 @@
 import logging
 from contextlib import asynccontextmanager
+import sys
 from pathlib import Path
+
+# Ensure the root project directory is on sys.path so FYP2 can be imported directly
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-import uvicorn
 from fastapi.concurrency import run_in_threadpool
+import uvicorn
 
 from FYP2.api import auth_routes, chat_routes, student_routes
 from FYP2.services import voice_service

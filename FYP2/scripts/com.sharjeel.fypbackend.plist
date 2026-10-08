@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sharjeel.fypbackend</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/sharjeelahmed/PycharmProjects/FYP</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/sharjeelahmed/PycharmProjects/FYP/.venv/bin/uvicorn</string>
+        <string>FYP2.main:app</string>
+        <string>--host</string>
+        <string>0.0.0.0</string>
+        <string>--port</string>
+        <string>8000</string>
+    </array>
+
+    <!-- Automatically start on Mac boot / user login -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Automatically restart if it crashes or stops -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Output and error logging -->
+    <key>StandardOutPath</key>
+    <string>/Users/sharjeelahmed/PycharmProjects/FYP/logs/backend.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/sharjeelahmed/PycharmProjects/FYP/logs/backend.stderr.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/sharjeelahmed/PycharmProjects/FYP/.venv/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
