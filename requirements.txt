@@ -13,3 +13,4 @@ langchain-ollama==0.3.10
 chromadb==1.5.9
 numpy==1.26.4
 pylsl==1.16.2
+langgraph==0.6.11

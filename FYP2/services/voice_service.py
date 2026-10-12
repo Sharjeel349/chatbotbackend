@@ -22,6 +22,7 @@ from FYP2.services.roman_urdu_service import (
     contains_urdu_script,
     transliterate_urdu_to_roman,
 )
+from FYP2.services.advisor_graph import AdvisorState, advisor_graph
 
 
 logger = logging.getLogger(__name__)
@@ -33,12 +34,48 @@ KNOWLEDGE_DIR = BASE_DIR / "knowledge"
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
-OLLAMA_MODEL_ENGLISH = os.getenv("OLLAMA_MODEL_ENGLISH", "gemma2:2b")
-OLLAMA_MODEL_ROMAN_URDU = os.getenv("OLLAMA_MODEL_ROMAN_URDU", "mistral")
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
-STT_BACKEND = os.getenv("STT_BACKEND", "openai-whisper")
+import torch
+
+DEVICE = os.getenv("DEVICE", "cuda" if torch.cuda.is_available() else "cpu")
+COMPUTE_TYPE = os.getenv("COMPUTE_TYPE", "float16" if DEVICE == "cuda" else "int8")
+WHISPER_MODEL = os.getenv(
+    "WHISPER_MODEL",
+    "large-v3-turbo" if torch.cuda.is_available() else "base",
+)
+STT_BACKEND = os.getenv("STT_BACKEND", "faster-whisper")
 MAX_HISTORY_MESSAGES = 3
+
+OLLAMA_URL = os.getenv("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
+OLLAMA_MODEL_DEFAULT = os.getenv("OLLAMA_MODEL", "qwen2.5:7b-instruct")
+OLLAMA_MODEL_ENGLISH = os.getenv("OLLAMA_MODEL_ENGLISH", OLLAMA_MODEL_DEFAULT)
+OLLAMA_MODEL_ROMAN_URDU = os.getenv("OLLAMA_MODEL_ROMAN_URDU", OLLAMA_MODEL_DEFAULT)
+
+
+@lru_cache(maxsize=1)
+def get_available_ollama_models() -> set[str]:
+    try:
+        res = requests.get("http://127.0.0.1:11434/api/tags", timeout=2)
+        if res.status_code == 200:
+            models = res.json().get("models", [])
+            names = set()
+            for m in models:
+                n = m.get("name", "")
+                names.add(n)
+                names.add(n.split(":")[0])
+            return names
+    except Exception:
+        pass
+    return set()
+
+
+def resolve_ollama_model(preferred: str, fallback: str = "mistral") -> str:
+    available = get_available_ollama_models()
+    if not available:
+        return preferred
+    if preferred in available or preferred.split(":")[0] in available:
+        return preferred
+    return fallback
+
 
 _stt_lock = threading.Lock()
 
@@ -95,12 +132,17 @@ def get_stt_model():
         try:
             from faster_whisper import WhisperModel
 
-            logger.info("Loading faster-whisper model '%s' with INT8", WHISPER_MODEL)
+            logger.info(
+                "Loading faster-whisper model '%s' on device '%s' with '%s'",
+                WHISPER_MODEL,
+                DEVICE,
+                COMPUTE_TYPE,
+            )
             model = WhisperModel(
                 WHISPER_MODEL,
-                device="cpu",
-                compute_type="int8",
-                cpu_threads=min(4, os.cpu_count() or 2),
+                device=DEVICE,
+                compute_type=COMPUTE_TYPE,
+                cpu_threads=min(4, os.cpu_count() or 2) if DEVICE == "cpu" else 1,
                 num_workers=1,
                 download_root=str(MODEL_CACHE_DIR),
             )
@@ -114,6 +156,7 @@ def get_stt_model():
     return "openai-whisper", whisper.load_model(WHISPER_MODEL)
 
 
+
 def warm_up_models() -> None:
     """Load speech recognition during API startup instead of the first request."""
     get_stt_model()
@@ -124,7 +167,8 @@ def _transcribe(audio_path: Path) -> tuple[str, str]:
         backend, model = get_stt_model()
         initial_prompt = (
             "میرا سی جی پی اے کتنا ہے، رزلٹ، کورسز، فیس، سمسٹر، ایڈوائزر، امتحان، داخلہ، "
-            "CGPA, GPA, semester, course, fees, exam, programming, drop, freeze"
+            "BIIT, Arid, CGPA, GPA, semester, course, prerequisite, drop, freeze, "
+            "unfreeze, withdrawal, probation, cease, attendance, fee, challan, installment, exam, mid-term, final-term"
         )
         if backend == "faster-whisper":
             segments, info = model.transcribe(
@@ -367,13 +411,23 @@ def build_student_context(
             "کورس",
             "سبجیکٹ",
             "پروگرامنگ",
+            "drop",
+            "dropped",
+            "withdraw",
+            "withdrawal",
+            "fail",
+            "failed",
+            "ڈراپ",
+            "فیل",
         },
     ):
         context["current_enrollments"] = get_current_enrollments(student_id, db_conn)
-        context["failed_courses"] = get_failed_courses(student_id, db_conn)
+        failed_courses = get_failed_courses(student_id, db_conn)
+        context["failed_courses"] = failed_courses
+        context["dropped_courses"] = failed_courses
         context["transcript"] = get_transcript(student_id, db_conn)
 
-    if _mentions(query, {"freeze", "semester", "gap", "فریز", "سمسٹر"}):
+    if _mentions(query, {"freeze", "semester", "gap", "فریز", "سمسٹر", "for ease", "forease"}):
         context["freeze_history"] = get_freeze_history(student_id, db_conn)
 
     if _mentions(
@@ -410,139 +464,65 @@ _RETRIEVAL_STOPWORDS = {
 }
 
 
+from FYP2.services.knowledge_service import retrieve_policy_knowledge
+
+
 def retrieve_knowledge(query: str) -> str:
-    """Retrieve small local rules without loading another native ML runtime.
-
-    The corpus is currently tiny, so lexical retrieval is faster and more
-    reliable than loading Chroma plus a second embedding model on every API
-    process. The separate index script remains available as the corpus grows.
-    """
-    normalized = query.casefold()
-    expansions = {
-        "سمسٹر": "semester",
-        "فریز": "freeze",
-        "کورس": "course",
-        "سبجیکٹ": "course",
-        "پروگرامنگ": "programming",
-        "استاد": "teacher",
-        "ٹیچر": "teacher",
-        "گریڈ": "grade",
-        "نتیجہ": "result",
-        "سی جی پی اے": "cgpa",
-        "حاضری": "attendance",
-        "امتحان": "exam examination",
-        "داخلہ": "admission eligibility",
-        "فیس": "fee installment",
-        "قسط": "installment fee",
-        "نقل": "cheating penalty",
-        "hazri": "attendance",
-        "haziri": "attendance",
-        "chutti": "leave attendance",
-        "dakhla": "admission eligibility",
-        "qist": "installment fee",
-        "qiston": "installment fee",
-        "kist": "installment fee",
-        "imtihan": "exam examination",
-        "paper": "exam examination",
-        "naqal": "cheating penalty",
-        "cheat": "cheating",
-    }
-    for source, replacement in expansions.items():
-        if source in normalized:
-            normalized += f" {replacement}"
-
-    raw_query_terms = set(re.findall(r"[a-z0-9]+", normalized))
-    query_terms = (raw_query_terms - _RETRIEVAL_STOPWORDS) or raw_query_terms
-    if not query_terms:
-        return ""
-
-    ranked: list[tuple[int, str]] = []
-    for section in _knowledge_sections():
-        section_terms = set(re.findall(r"[a-z0-9]+", section.casefold()))
-        heading = section.splitlines()[0].casefold() if section else ""
-        heading_terms = set(re.findall(r"[a-z0-9]+", heading))
-        score = len(query_terms & section_terms) + 2 * len(query_terms & heading_terms)
-        if score:
-            ranked.append((score, section))
-
-    ranked.sort(key=lambda item: item[0], reverse=True)
-    if not ranked:
-        return ""
-    # Return the single best matching rule, capped at 400 characters to keep prompt fast
-    return ranked[0][1][:400].strip()
+    """Retrieve policy knowledge using 100% offline Hybrid Search (ChromaDB + Lexical fallback)."""
+    return retrieve_policy_knowledge(query)
 
 
-def direct_database_reply(
-    query: str, language: str, context: dict[str, Any]
-) -> str | None:
-    profile = context.get("profile") or {}
-    normalized = query.casefold().strip()
+SEMESTER_MIN_CGPA = {
+    2: 1.00,
+    3: 1.25,
+    4: 1.50,
+    5: 1.75,
+    6: 2.00,
+    7: 2.25,
+    8: 2.50,
+}
 
-    # Instant response for greetings (avoids heavy LLM call and unwanted advice)
-    greeting_terms = (
-        "hi", "hello", "hey", "salam", "assalam", "assalam o alaikum",
-        "assalamu alaikum", "aoa", "kaisa hai", "kaise ho", "kese ho",
-        "kia hal hai", "kya hal hai", "good morning", "good afternoon",
-        "good evening", "how are you",
-    )
-    words = re.findall(r"[a-z]+", normalized)
-    is_greeting = False
-    if words and len(words) <= 5:
-        if any(term in normalized for term in greeting_terms):
-            is_greeting = True
-    elif normalized in {"hi", "hello", "hey", "salam", "assalam", "assalam o alaikum"}:
-        is_greeting = True
+SEMESTER_WORD_MAP = {
+    "1": 1, "1st": 1, "first": 1, "pehla": 1,
+    "2": 2, "2nd": 2, "second": 2, "doosra": 2, "dusra": 2,
+    "3": 3, "3rd": 3, "third": 3, "teesra": 3,
+    "4": 4, "4th": 4, "fourth": 4, "chotha": 4,
+    "5": 5, "5th": 5, "fifth": 5, "panchwan": 5,
+    "6": 6, "6th": 6, "sixth": 6, "chattha": 6, "chatha": 6,
+    "7": 7, "7th": 7, "seventh": 7, "saatwan": 7,
+    "8": 8, "8th": 8, "eighth": 8, "aathwan": 8,
+}
 
-    if is_greeting:
-        first_name = (profile.get("full_name") or profile.get("name") or "").split()[0]
-        name_suffix = f" {first_name}" if first_name else ""
-        if language == "roman_urdu":
-            return (
-                f"Walekum Assalam{name_suffix}! Main aap ka university academic advisor hoon. "
-                "Aaj main aap ki kya madad kar sakta hoon?"
-            )
-        else:
-            return (
-                f"Hello{name_suffix}! I am your university academic advisor. "
-                "How can I help you today with your courses, GPA, or university policies?"
-            )
+ACADEMIC_TERMS = {
+    "course", "courses", "subject", "subjects", "semester", "semesters",
+    "gpa", "cgpa", "exam", "exams", "examination", "test", "grade", "grades",
+    "mark", "marks", "teacher", "teachers", "advisor", "advisors", "fee", "fees",
+    "attendance", "freeze", "drop", "enroll", "enrollment", "admission",
+    "degree", "transcript", "credit", "credits", "lecture", "class", "classes",
+    "paper", "fail", "pass", "promote", "promotion", "repeat", "cease",
+    "kors", "kursa", "hazri", "imtihan", "parhai", "dakhla", "qist", "challan",
+}
 
-    if any(
-        term in normalized
-        for term in ("cgpa", "gpa", "سی جی پی اے", "جی پی اے")
-    ):
-        cgpa = profile.get("cgpa")
-        if cgpa is not None:
-            return (
-                f"Aap ka CGPA {cgpa} hai."
-                if language == "roman_urdu"
-                else f"Your CGPA is {cgpa}."
-            )
+IRRELEVANT_PATTERNS = [
+    r"\bweather\b", r"\bmosam\b", r"\bmausam\b", r"\brain\b", r"\bbarish\b",
+    r"\btemperature\b", r"\bforecast\b", r"\bsunny\b", r"\bcloudy\b",
+    r"\bcricket\b", r"\bfootball\b", r"\bmatch\b", r"\bmovie\b", r"\bfilm\b",
+    r"\bsong\b", r"\bgana\b", r"\bjoke\b", r"\blatifa\b", r"\brecipe\b",
+    r"\bkhana\b", r"\bpolitics\b", r"\bsiasat\b", r"\bprime minister\b",
+    r"\bpresident\b", r"\bnews\b", r"\bkhabar\b", r"\bkhabrain\b",
+]
 
-    if any(
-        term in normalized
-        for term in ("advisor", "supervisor", "ایڈوائزر", "مشیر")
-    ):
-        advisor = profile.get("advisor_name")
-        if advisor:
-            return (
-                f"Aap ke academic advisor {advisor} hain."
-                if language == "roman_urdu"
-                else f"Your academic advisor is {advisor}."
-            )
 
-    if (
-        "semester" in normalized or "سمسٹر" in normalized
-    ) and "freeze" not in normalized and "فریز" not in normalized:
-        semester = profile.get("semester")
-        if semester:
-            return (
-                f"Aap is waqt semester {semester} mein hain."
-                if language == "roman_urdu"
-                else f"You are currently in semester {semester}."
-            )
+def is_irrelevant_query(text: str) -> bool:
+    normalized = text.casefold().strip()
+    words = set(re.findall(r"[a-z]+", normalized))
+    # If the question contains academic terminology, do not flag as irrelevant
+    if words & ACADEMIC_TERMS:
+        return False
+    return any(re.search(pat, normalized) for pat in IRRELEVANT_PATTERNS)
 
-    return None
+
+
 
 
 def build_prompt(
@@ -570,8 +550,16 @@ You are a helpful university academic advisor.
 LANGUAGE:
 {language_rule}
 
+ROLE & DOMAIN RESTRICTIONS (STRICT):
+- You are STRICTLY a University Academic Advisor.
+- You ONLY answer questions regarding university studies: degree rules, semester policies, courses, CGPA/GPA, exams, attendance, credit hours, and fees.
+- If the student asks about anything outside university academics (such as weather, sports, general knowledge, movies, news, food/recipes, casual chitchat, or non-academic coding tasks):
+  Do NOT answer the off-topic question. Politely refuse and state that you can only assist with university and academic matters.
+  Example English refusal: "I am your university academic advisor and can only assist with academic matters, courses, CGPA, and university policies. Please ask a university-related question."
+  Example Roman Urdu refusal: "Main aap ka university academic advisor hoon aur sirf academic mamlaat, courses, CGPA, aur university policies mein madad kar sakta hoon. Please apni parhai se mutaliq sawal poochein."
+
 STYLE:
-- Use no more than 2-3 short conversational sentences.
+- Use no more than 5-10 short conversational sentences.
 - Answer the student's exact question directly and first.
 - Do NOT give unsolicited warnings or lectures about workload or grades unless the student specifically asks for evaluation.
 - Never invent a student fact or university rule.
@@ -624,10 +612,87 @@ def stream_llm_reply(prompt: str, model: str) -> Iterator[str]:
                 break
 
 
-def synthesize_speech(text: str, output_path: Path) -> bool:
+def select_tts_voice(
+    engine: pyttsx3.Engine,
+    language: str = "english",
+    detected_language: str = "en",
+) -> str | None:
+    """Select the most suitable voice for speech synthesis.
+
+    If the user language is Urdu or Roman Urdu (even if the generated reply uses Latin/English alphabet),
+    pyttsx3 is instructed to use an Urdu or Hindi voice (e.g., Lekha on macOS, Kalpana on Windows, or hi/ur)
+    so that phonetics and pronunciation sound natural instead of being mispronounced with a Western English accent.
+    """
+    try:
+        voices = engine.getProperty("voices")
+    except Exception:
+        return None
+
+    if not voices:
+        return None
+
+    is_urdu_or_hindi = (
+        language == "roman_urdu"
+        or (bool(detected_language) and detected_language.lower() in URDU_LANGUAGE_CODES)
+        or (bool(detected_language) and detected_language.lower() in ("ur", "hi", "urdu", "hindi", "pa"))
+    )
+
+    if is_urdu_or_hindi:
+        # 1. Search for Urdu voice
+        for v in voices:
+            langs = [str(l).lower() for l in getattr(v, "languages", [])]
+            vid = v.id.lower()
+            vname = v.name.lower()
+            if any("ur" in l for l in langs) or "urdu" in vid or "urdu" in vname:
+                return v.id
+
+        # 2. Search for Hindi voice (e.g. Lekha on macOS, Kalpana on Windows)
+        for v in voices:
+            langs = [str(l).lower() for l in getattr(v, "languages", [])]
+            vid = v.id.lower()
+            vname = v.name.lower()
+            if any("hi" in l for l in langs) or "hindi" in vid or "hindi" in vname or "lekha" in vid or "kalpana" in vid:
+                return v.id
+
+        # 3. Fallback to Indian English (e.g. Rishi on macOS, en_IN)
+        for v in voices:
+            langs = [str(l).lower() for l in getattr(v, "languages", [])]
+            vid = v.id.lower()
+            vname = v.name.lower()
+            if any("en_in" in l or "en-in" in l for l in langs) or "rishi" in vid or "en-in" in vid:
+                return v.id
+
+    # For English:
+    for v in voices:
+        langs = [str(l).lower() for l in getattr(v, "languages", [])]
+        vname = v.name.lower()
+        vid = v.id.lower()
+        if any(l in ("en_us", "en-us", "en_gb", "en-gb") for l in langs) and any(
+            n in vname or n in vid for n in ("samantha", "daniel", "karen", "alex", "ava", "rishi")
+        ):
+            return v.id
+
+    return None
+
+
+def synthesize_speech(
+    text: str,
+    output_path: Path,
+    language: str = "english",
+    detected_language: str = "en",
+) -> bool:
     try:
         engine = pyttsx3.init()
         engine.setProperty("rate", 155)
+        selected_voice = select_tts_voice(engine, language, detected_language)
+        if selected_voice:
+            engine.setProperty("voice", selected_voice)
+            logger.info(
+                "Selected TTS voice '%s' for language='%s' (detected='%s')",
+                selected_voice,
+                language,
+                detected_language,
+            )
         engine.save_to_file(text, str(output_path))
         engine.runAndWait()
         return output_path.exists()
@@ -693,24 +758,28 @@ def stream_voice_chat(
         stage = time.perf_counter()
         yield _event("status", message="Understanding your voice...")
         user_text, detected_language = _transcribe(user_audio_path)
+        raw_user_text = user_text
 
         if contains_urdu_script(user_text) or detected_language in URDU_LANGUAGE_CODES or response_language(detected_language, user_text) == "roman_urdu":
-            user_text = clean_and_normalize_roman_urdu(user_text)
             detected_language = "ur"
 
         timings["transcription"] = round((time.perf_counter() - stage) * 1000)
 
         if not user_text or is_hallucination(user_text):
-            user_text = "[No speech detected]"
-        language = response_language(detected_language, user_text)
+            raw_user_text = "[No speech detected]"
+            display_text = "[No speech detected]"
+        else:
+            display_text = clean_and_normalize_roman_urdu(raw_user_text) if contains_urdu_script(raw_user_text) else raw_user_text
+
+        language = response_language(detected_language, display_text)
         yield _event(
             "transcript",
-            text=user_text,
+            text=display_text,
             detected_language=detected_language,
             response_language=language,
         )
 
-        if user_text == "[No speech detected]":
+        if raw_user_text == "[No speech detected]":
             reply = (
                 "Mujhe aap ki awaaz saaf sunai nahi di, dobara bol dein."
                 if language == "roman_urdu"
@@ -718,23 +787,41 @@ def stream_voice_chat(
             )
         else:
             stage = time.perf_counter()
-            yield _event("status", message="Checking your academic information...")
+            yield _event("status", message="Analyzing query with academic advisor graph...")
             emotion = get_latest_emotion(db_conn)
-            context = build_student_context(user_text, session_id, student_id, db_conn)
-            knowledge = retrieve_knowledge(user_text)
-            timings["context"] = round((time.perf_counter() - stage) * 1000)
 
-            reply = direct_database_reply(user_text, language, context)
+            graph_state: AdvisorState = {
+                "query": raw_user_text,
+                "language": language,
+                "detected_language": detected_language,
+                "emotion": emotion,
+                "student_id": student_id,
+                "session_id": session_id,
+                "db_conn": db_conn,
+            }
+
+            reply = None
+            prompt = None
+            model = None
+
+            for event in advisor_graph.stream(graph_state):
+                if "handle_greeting" in event:
+                    reply = event["handle_greeting"].get("response")
+                    break
+                elif "handle_irrelevant" in event:
+                    reply = event["handle_irrelevant"].get("response")
+                    break
+                elif "retrieve_knowledge" in event:
+                    retrieved_data = event["retrieve_knowledge"]
+                    prompt = retrieved_data.get("prompt", "")
+                    model = retrieved_data.get("model", OLLAMA_MODEL_ENGLISH)
+                    timings["context"] = round((time.perf_counter() - stage) * 1000)
+                    break
+
             yield _event("reply_start", response_language=language)
             if reply:
                 yield _event("token", text=reply)
-            else:
-                prompt = build_prompt(user_text, language, emotion, context, knowledge)
-                model = (
-                    OLLAMA_MODEL_ROMAN_URDU
-                    if language == "roman_urdu"
-                    else OLLAMA_MODEL_ENGLISH
-                )
+            elif prompt and model:
                 stage = time.perf_counter()
                 chunks: list[str] = []
                 script_violation = False
@@ -747,8 +834,8 @@ def stream_voice_chat(
                             yield _event("token", text=token)
                     reply = "".join(chunks).strip()
                     if language == "roman_urdu":
-                        # Remove any trailing English translation in parentheses
-                        reply = re.sub(r"\s*\([A-Za-z\s,.'’]+\)\s*$", "", reply).strip()
+                        # Remove any English translation in parentheses throughout the reply
+                        reply = re.sub(r"\s*\([A-Za-z0-9\s,.'’?!]+\)", "", reply).strip()
                 except Exception:
                     logger.exception("Ollama generation failed")
                     reply = (
@@ -778,7 +865,12 @@ def stream_voice_chat(
 
         stage = time.perf_counter()
         yield _event("status", message="Preparing the audio reply...")
-        if not synthesize_speech(reply, bot_audio_path):
+        if not synthesize_speech(
+            reply,
+            bot_audio_path,
+            language=language,
+            detected_language=detected_language,
+        ):
             bot_audio_url = None
         timings["speech"] = round((time.perf_counter() - stage) * 1000)
 

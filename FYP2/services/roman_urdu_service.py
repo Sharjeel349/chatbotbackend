@@ -799,6 +799,8 @@ def transliterate_urdu_to_roman(text: str) -> str:
         r"\bfys\b": "fees",
         r"\bdystkta\b": "de sakta",
         r"\bkroa\b": "karwa",
+        r"\bfor ease\b": "freeze",
+        r"\bforease\b": "freeze",
     }
     for pattern, repl in typo_fixes.items():
         sentence = re.sub(pattern, repl, sentence, flags=re.IGNORECASE)
@@ -837,6 +839,8 @@ _PHONETIC_NORMALIZATION: Final[dict[str, str]] = {
     r"\baoy\b": "abhi",
     r"hoئy": "hui",
     r"\bkiya\b": "kya",
+    r"\bfor ease\b": "freeze",
+    r"\bforease\b": "freeze",
 }
 
 

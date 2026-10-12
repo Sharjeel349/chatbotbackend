@@ -69,3 +69,18 @@
 - **Holistic Competencies**: Emphasis is placed on technical skills, soft skills, professionalism, ethics, and teamwork.
 - **Academic Calendar**: Mid-Term and Final-Term examinations strictly follow the official University Academic Calendar.
 - **Assignments and Projects**: Timely submission of term projects, quizzes, and assignments under teacher guidance is mandatory.
+
+## Semester Freeze Policy
+- **Eligibility**: Students who have completed at least their first semester with regular standing may apply to freeze a semester. Students in Semester 1 (newly admitted) are not allowed to freeze their semester under any circumstances.
+- **Maximum Permissible Freeze**: A student is allowed to freeze a maximum of **2 semesters** in their entire undergraduate degree program, either consecutively or separately.
+- **Degree Duration Impact**: Freezing a semester does not extend the maximum allowable degree duration. The entire degree must still be completed within the absolute ceiling of **12 registered semesters**.
+- **Application Deadline**: The official semester freeze application must be submitted to the Academic Department / Director's Office within the first **2 weeks** of the commencement of that semester.
+- **Dues Clearance and Freeze Fee**: All previous financial dues must be fully cleared, and the prescribed semester freeze fee must be paid before approval is granted.
+- **Resumption / Unfreezing Procedure**: To resume studies, the student must apply for re-joining / unfreezing before the start of the target semester and register with the corresponding regular session. Skipping beyond the approved freeze period without authorization leads to cancellation of admission.
+
+## Course Drop and Course Withdrawal Policy
+- **Course Drop Period (Add/Drop)**: Students may drop a course within the first **2 weeks** of the semester. A course dropped during this add/drop period does not appear on the student's official transcript and incurs no academic penalty.
+- **Course Withdrawal Period**: After the add/drop deadline up to the **8th week (before Mid-Term exams)**, a student may withdraw from a course with official advisor approval. A grade of **'W'** will be recorded on the transcript. Grade 'W' does not affect CGPA, but course tuition fees are non-refundable.
+- **Dropped / Failed Courses ('F' Grade)**: In the university records, any course with a grade of **'F'** is classified as a dropped/failed course. Students are required to re-register and repeat all 'F' grade courses in subsequent semesters when offered.
+- **Minimum Credit Hour Ceiling**: A student cannot drop courses that reduce their registered semester credit load below the mandatory minimum of **15 credit hours**, unless special approval is granted by the Director.
+
