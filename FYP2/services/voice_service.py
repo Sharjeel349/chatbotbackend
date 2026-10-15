@@ -68,7 +68,7 @@ def get_available_ollama_models() -> set[str]:
     return set()
 
 
-def resolve_ollama_model(preferred: str, fallback: str = "mistral") -> str:
+def resolve_ollama_model(preferred: str, fallback: str = "qwen2.5:7b-instruct") -> str:
     available = get_available_ollama_models()
     if not available:
         return preferred
@@ -329,6 +329,28 @@ def get_current_enrollments(student_id: str, db_conn):
         cur.close()
 
 
+def get_course_prerequisites(db_conn):
+    cur = db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT c.course_id, c.title AS course_title,
+                   p.course_id AS prerequisite_id, p.title AS prerequisite_title
+            FROM Course_Prerequisite cp
+            JOIN Course c ON cp.course_id = c.course_id
+            JOIN Course p ON cp.prerequisite_id = p.course_id
+            ORDER BY c.title ASC;
+            """
+        )
+        return cur.fetchall()
+    except Exception:
+        _safe_rollback(db_conn)
+        logger.exception("Could not fetch course prerequisites")
+        return []
+    finally:
+        cur.close()
+
+
 def get_teacher_strictness_stats(db_conn):
     cur = db_conn.cursor()
     try:
@@ -434,6 +456,26 @@ def build_student_context(
         query, {"teacher", "instructor", "sir", "madam", "استاد", "ٹیچر"}
     ):
         context["teacher_statistics"] = get_teacher_strictness_stats(db_conn)
+
+    if _mentions(
+        query,
+        {
+            "prerequisite",
+            "prerequisites",
+            "prereq",
+            "prereqs",
+            "pre-req",
+            "pehle",
+            "shart",
+            "pre requisite",
+            "پہلے",
+            "شرط",
+        },
+    ):
+        context["course_prerequisites"] = get_course_prerequisites(db_conn)
+        context["transcript"] = get_transcript(student_id, db_conn)
+        failed_courses = get_failed_courses(student_id, db_conn)
+        context["failed_courses"] = failed_courses
 
     if _mentions(
         query, {"grade", "transcript", "result", "marks", "performance", "performing", "گریڈ", "نتیجہ"}

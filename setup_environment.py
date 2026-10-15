@@ -39,7 +39,7 @@ DEFAULT_DUMP_FILE = PROJECT_ROOT / "database_backup.dump"
 ALT_DUMP_PATH = Path("/Users/sharjeelahmed/fyprecovery")
 
 REQUIRED_EEG_LIBS = ["pylsl", "muselsl"]
-DEFAULT_MODELS = ["gemma2:2b", "mistral", "nomic-embed-text"]
+DEFAULT_MODELS = ["qwen2.5:7b-instruct", "nomic-embed-text"]
 
 
 def print_banner():
@@ -259,8 +259,8 @@ def check_and_setup_ollama():
 
     # Models required by the advisor
     env_vals = read_env_values()
-    eng_model = env_vals.get("OLLAMA_MODEL_ENGLISH", "gemma2:2b")
-    urdu_model = env_vals.get("OLLAMA_MODEL_ROMAN_URDU", "mistral")
+    eng_model = env_vals.get("OLLAMA_MODEL_ENGLISH", "qwen2.5:7b-instruct")
+    urdu_model = env_vals.get("OLLAMA_MODEL_ROMAN_URDU", "qwen2.5:7b-instruct")
     models_to_check = list(set([eng_model, urdu_model] + DEFAULT_MODELS))
 
     for model in models_to_check:

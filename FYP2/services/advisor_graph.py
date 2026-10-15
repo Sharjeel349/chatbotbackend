@@ -171,7 +171,7 @@ def retrieve_knowledge_node(state: AdvisorState) -> dict[str, Any]:
     )
     model = resolve_ollama_model(
         preferred_model,
-        fallback="mistral" if language == "roman_urdu" else "gemma2:2b",
+        fallback="qwen2.5:7b-instruct",
     )
 
     return {
