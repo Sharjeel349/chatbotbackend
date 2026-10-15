@@ -375,6 +375,179 @@ def get_teacher_strictness_stats(db_conn):
         cur.close()
 
 
+def get_completed_credit_hours(student_id: str, db_conn):
+    """Calculates total credit hours successfully earned by the student."""
+    cur = db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(c.credit_hours), 0) AS completed_credits,
+                   COUNT(DISTINCT c.course_id) AS total_passed_courses
+            FROM Enrolment e
+            JOIN Course_Offering co ON e.offering_id = co.offering_id
+            JOIN Course c ON co.course_id = c.course_id
+            WHERE e.student_id = %s 
+              AND e.grade IS NOT NULL 
+              AND e.grade <> 'F';
+            """,
+            (student_id,),
+        )
+        row = cur.fetchone()
+        return row if row else {"completed_credits": 0, "total_passed_courses": 0}
+    except Exception:
+        _safe_rollback(db_conn)
+        logger.exception("Could not fetch completed credit hours")
+        return {"completed_credits": 0, "total_passed_courses": 0}
+    finally:
+        cur.close()
+
+
+def get_improvable_courses(student_id: str, db_conn):
+    """Fetches courses with D or F grades that the student is eligible to repeat."""
+    cur = db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT c.course_id, c.title AS course_title, c.credit_hours, e.grade, co.session
+            FROM Enrolment e
+            JOIN Course_Offering co ON e.offering_id = co.offering_id
+            JOIN Course c ON co.course_id = c.course_id
+            WHERE e.student_id = %s 
+              AND e.grade IN ('D', 'F')
+            ORDER BY e.grade DESC, c.title ASC;
+            """,
+            (student_id,),
+        )
+        return cur.fetchall()
+    except Exception:
+        _safe_rollback(db_conn)
+        logger.exception("Could not fetch improvable courses")
+        return []
+    finally:
+        cur.close()
+
+
+def get_current_teachers_and_courses(student_id: str, db_conn):
+    """Fetches the student's current semester courses along with assigned teacher names and designations."""
+    cur = db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT c.course_id, c.title AS course_title, c.credit_hours,
+                   u.name AS teacher_name, t.designation, t.department
+            FROM Enrolment e
+            JOIN Course_Offering co ON e.offering_id = co.offering_id
+            JOIN Course c ON co.course_id = c.course_id
+            JOIN Teacher t ON co.teacher_id = t.teacher_id
+            JOIN Users u ON t.user_id = u.user_id
+            WHERE e.student_id = %s AND e.grade IS NULL
+            ORDER BY c.title ASC;
+            """,
+            (student_id,),
+        )
+        return cur.fetchall()
+    except Exception:
+        _safe_rollback(db_conn)
+        logger.exception("Could not fetch current teachers and courses")
+        return []
+    finally:
+        cur.close()
+
+
+def check_student_prerequisite_status(student_id: str, db_conn):
+    """Checks all prerequisites and flags whether the student has passed them or not."""
+    cur = db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT 
+                target_c.course_id AS target_course_id,
+                target_c.title AS target_course_title,
+                prereq_c.course_id AS prereq_course_id,
+                prereq_c.title AS prereq_course_title,
+                COALESCE((
+                    SELECT e.grade 
+                    FROM Enrolment e 
+                    JOIN Course_Offering co ON e.offering_id = co.offering_id
+                    WHERE co.course_id = prereq_c.course_id AND e.student_id = %s
+                    ORDER BY CASE WHEN e.grade <> 'F' THEN 1 ELSE 2 END, e.enrolment_id DESC
+                    LIMIT 1
+                ), 'Not Taken') AS student_prereq_grade,
+                CASE 
+                    WHEN EXISTS (
+                        SELECT 1 
+                        FROM Enrolment e 
+                        JOIN Course_Offering co ON e.offering_id = co.offering_id
+                        WHERE co.course_id = prereq_c.course_id 
+                          AND e.student_id = %s
+                          AND e.grade IS NOT NULL 
+                          AND e.grade <> 'F'
+                    ) THEN 'Eligible'
+                    ELSE 'Not Eligible'
+                END AS eligibility_status
+            FROM Course_Prerequisite cp
+            JOIN Course target_c ON cp.course_id = target_c.course_id
+            JOIN Course prereq_c ON cp.prerequisite_id = prereq_c.course_id
+            ORDER BY target_c.title ASC;
+            """,
+            (student_id, student_id),
+        )
+        return cur.fetchall()
+    except Exception:
+        _safe_rollback(db_conn)
+        logger.exception("Could not check student prerequisite status")
+        return []
+    finally:
+        cur.close()
+
+
+def get_student_session_timeline(student_id: str, db_conn):
+    """Fetches the student's complete session history (Active, Frozen, Completed)."""
+    cur = db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT session, status
+            FROM Student_Session
+            WHERE sid = %s
+            ORDER BY session_id ASC;
+            """,
+            (student_id,),
+        )
+        return cur.fetchall()
+    except Exception:
+        _safe_rollback(db_conn)
+        logger.exception("Could not fetch student session timeline")
+        return []
+    finally:
+        cur.close()
+
+
+def get_current_semester_load(student_id: str, db_conn):
+    """Calculates total enrolled credit hours and course count in the ongoing semester."""
+    cur = db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT COALESCE(SUM(c.credit_hours), 0) AS total_enrolled_credits,
+                   COUNT(DISTINCT c.course_id) AS total_enrolled_courses
+            FROM Enrolment e
+            JOIN Course_Offering co ON e.offering_id = co.offering_id
+            JOIN Course c ON co.course_id = c.course_id
+            WHERE e.student_id = %s AND e.grade IS NULL;
+            """,
+            (student_id,),
+        )
+        row = cur.fetchone()
+        return row if row else {"total_enrolled_credits": 0, "total_enrolled_courses": 0}
+    except Exception:
+        _safe_rollback(db_conn)
+        logger.exception("Could not fetch current semester load")
+        return {"total_enrolled_credits": 0, "total_enrolled_courses": 0}
+    finally:
+        cur.close()
+
+
 def get_recent_chat_history(session_id: int, db_conn):
     cur = db_conn.cursor()
     try:
@@ -448,37 +621,82 @@ def build_student_context(
         context["failed_courses"] = failed_courses
         context["dropped_courses"] = failed_courses
         context["transcript"] = get_transcript(student_id, db_conn)
+        context["current_semester_load"] = get_current_semester_load(student_id, db_conn)
 
-    if _mentions(query, {"freeze", "semester", "gap", "فریز", "سمسٹر", "for ease", "forease"}):
-        context["freeze_history"] = get_freeze_history(student_id, db_conn)
-
-    if _mentions(
-        query, {"teacher", "instructor", "sir", "madam", "استاد", "ٹیچر"}
-    ):
-        context["teacher_statistics"] = get_teacher_strictness_stats(db_conn)
-
+    # 1. Degree Progress & Completed Credit Hours
     if _mentions(
         query,
         {
-            "prerequisite",
-            "prerequisites",
-            "prereq",
-            "prereqs",
-            "pre-req",
-            "pehle",
-            "shart",
-            "pre requisite",
-            "پہلے",
-            "شرط",
+            "credit", "credits", "credit hour", "credit hours", "completed", "passed",
+            "progress", "degree", "fyp", "graduation", "pass kitne", "kitne pass",
+            "کرڈٹ", "پاس", "ڈگری"
         },
     ):
+        context["completed_credits_summary"] = get_completed_credit_hours(student_id, db_conn)
+
+    # 2. Improvable / Repeat Courses (D or F grades)
+    if _mentions(
+        query,
+        {
+            "repeat", "improve", "improvement", "d grade", "f grade", "cgpa barhana",
+            "dobara", "ریپیٹ", "امپروو", "دوبارہ"
+        },
+    ):
+        context["improvable_courses"] = get_improvable_courses(student_id, db_conn)
+
+    # 3. Semester Load & Overload Check
+    if _mentions(
+        query,
+        {
+            "workload", "load", "overload", "limit", "credits this semester", "kitne subjects",
+            "load zyada", "work load", "ورک لوڈ"
+        },
+    ):
+        context["current_semester_load"] = get_current_semester_load(student_id, db_conn)
+
+    # 4. Teachers & Course Faculty
+    if _mentions(
+        query,
+        {
+            "teacher", "teachers", "instructor", "faculty", "sir", "madam", "parha raha",
+            "parha rahi", "kon parha", "kaun parha", "استاد", "ٹیچر"
+        },
+    ):
+        context["current_teachers"] = get_current_teachers_and_courses(student_id, db_conn)
+        context["teacher_statistics"] = get_teacher_strictness_stats(db_conn)
+
+    # 5. Session Timeline & Freeze History
+    if _mentions(
+        query,
+        {
+            "freeze", "semester", "gap", "history", "timeline", "session",
+            "فریز", "سمسٹر", "for ease", "forease", "گیپ"
+        },
+    ):
+        context["freeze_history"] = get_freeze_history(student_id, db_conn)
+        context["session_timeline"] = get_student_session_timeline(student_id, db_conn)
+
+    # 6. Prerequisites & Eligibility Check
+    if _mentions(
+        query,
+        {
+            "prerequisite", "prerequisites", "prereq", "prereqs", "pre-req", "pehle",
+            "shart", "pre requisite", "eligible", "eligibility", "le sakta", "پہلے", "شرط"
+        },
+    ):
+        context["student_prerequisite_eligibility"] = check_student_prerequisite_status(student_id, db_conn)
         context["course_prerequisites"] = get_course_prerequisites(db_conn)
         context["transcript"] = get_transcript(student_id, db_conn)
         failed_courses = get_failed_courses(student_id, db_conn)
         context["failed_courses"] = failed_courses
 
+    # 7. Transcript & Grades
     if _mentions(
-        query, {"grade", "transcript", "result", "marks", "performance", "performing", "گریڈ", "نتیجہ"}
+        query,
+        {
+            "grade", "transcript", "result", "marks", "performance", "performing",
+            "گریڈ", "نتیجہ", "مارکس"
+        },
     ):
         context["transcript"] = get_transcript(student_id, db_conn)
 
