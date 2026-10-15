@@ -39,7 +39,7 @@ DEFAULT_DUMP_FILE = PROJECT_ROOT / "database_backup.dump"
 ALT_DUMP_PATH = Path("/Users/sharjeelahmed/fyprecovery")
 
 REQUIRED_EEG_LIBS = ["pylsl", "muselsl"]
-DEFAULT_MODELS = ["gemma2:2b", "mistral"]
+DEFAULT_MODELS = ["gemma2:2b", "mistral", "nomic-embed-text"]
 
 
 def print_banner():
