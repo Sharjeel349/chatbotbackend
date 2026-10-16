@@ -283,38 +283,6 @@ def check_and_setup_ollama():
 # -------------------------------------------------------------
 # STEP 3: PostgreSQL & Database Setup / Restore
 # -------------------------------------------------------------
-def prompt_db_credentials() -> dict:
-    env_vals = read_env_values()
-
-    def_host = env_vals.get("DB_HOST", "localhost")
-    def_port = env_vals.get("DB_PORT", "5432")
-    def_user = env_vals.get("DB_USER", "postgres")
-    def_name = env_vals.get("DB_NAME", "fyp_i")
-    def_password = env_vals.get("DB_PASSWORD", "")
-
-    print(f"\n{BOLD}Please confirm your PostgreSQL connection parameters:{RESET}")
-
-    host = input(f"  • Database Host [{def_host}]: ").strip() or def_host
-    port = input(f"  • Database Port [{def_port}]: ").strip() or def_port
-    user = input(f"  • Database Username [{def_user}]: ").strip() or def_user
-
-    if def_password:
-        pwd_prompt = f"  • Database Password [stored in .env]: "
-    else:
-        pwd_prompt = f"  • Database Password: "
-
-    pwd_input = getpass.getpass(pwd_prompt)
-    password = pwd_input if pwd_input else def_password
-
-    dbname = input(f"  • Database Name [{def_name}]: ").strip() or def_name
-
-    return {
-        "host": host,
-        "port": port,
-        "user": user,
-        "password": password,
-        "database": dbname,
-    }
 
 
 def find_db_dump_file() -> Path | None:
@@ -376,117 +344,37 @@ def restore_database(pg_restore_bin: str, creds: dict, dump_path: Path):
 
 
 def setup_database():
-    log_step("Configuring PostgreSQL & Academic Database")
+    log_step("Configuring PostgreSQL Database Environment")
 
-    # Locate PostgreSQL tools
+    creds = {
+        "DB_HOST": "localhost",
+        "DB_PORT": "5432",
+        "DB_USER": "sharjeel",
+        "DB_PASSWORD": "shamra349",
+        "DB_NAME": "fyp_i",
+    }
+
+    # Save credentials directly to FYP2/.env
+    update_env_file(creds)
+    log_success(f"Database settings configured in .env (user='{creds['DB_USER']}', database='{creds['DB_NAME']}').")
+
+    # Locate PostgreSQL tools for optional restore
     pg_restore_bin = find_executable("pg_restore")
     if not pg_restore_bin:
-        log_warn("pg_restore not found in system PATH. Checking PostgreSQL 18/17 default locations...")
         for ver in [18, 17, 16, 15]:
             candidate = Path(f"/Library/PostgreSQL/{ver}/bin/pg_restore")
             if candidate.exists():
                 pg_restore_bin = str(candidate)
                 break
 
-    if not pg_restore_bin:
-        log_warn("Could not find 'pg_restore'. Database dump restore may require manual action.")
-    else:
-        log_success(f"PostgreSQL restore utility found: {pg_restore_bin}")
-
-    creds = prompt_db_credentials()
-
-    # Try connecting to PostgreSQL using psycopg2
-    try:
-        import psycopg2
-        from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
-    except ImportError:
-        log_error("psycopg2 is not installed. Please run dependency installation first.")
-        return False
-
-    # 1. Connect to PostgreSQL server (connecting to maintenance db 'postgres')
-    target_db = creds["database"]
-    server_conn = None
-    try:
-        server_conn = psycopg2.connect(
-            host=creds["host"],
-            port=creds["port"],
-            user=creds["user"],
-            password=creds["password"],
-            dbname="postgres",
-            connect_timeout=5,
-        )
-        server_conn.set_isolation_level(ISOLATION_LEVEL_AUTOCOMMIT)
-        log_success("Connected to PostgreSQL server successfully.")
-    except Exception as e:
-        log_error(f"Could not connect to PostgreSQL server: {e}")
-        log_info("Please verify your host, port, username, and password.")
-        return False
-
-    # 2. Check if the target database exists
-    cursor = server_conn.cursor()
-    cursor.execute("SELECT 1 FROM pg_database WHERE datname = %s;", (target_db,))
-    db_exists = cursor.fetchone() is not None
-
-    if not db_exists:
-        log_info(f"Database '{target_db}' does not exist. Creating database now...")
-        try:
-            cursor.execute(f'CREATE DATABASE "{target_db}";')
-            log_success(f"Database '{target_db}' created successfully.")
-            db_exists = True
-        except Exception as e:
-            log_error(f"Failed to create database '{target_db}': {e}")
-            cursor.close()
-            server_conn.close()
-            return False
-    else:
-        log_success(f"Database '{target_db}' already exists.")
-
-    cursor.close()
-    server_conn.close()
-
-    # 3. Check table count in the target database
-    table_count = 0
-    try:
-        db_conn = psycopg2.connect(
-            host=creds["host"],
-            port=creds["port"],
-            user=creds["user"],
-            password=creds["password"],
-            dbname=target_db,
-            connect_timeout=5,
-        )
-        with db_conn.cursor() as cur:
-            cur.execute("SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';")
-            table_count = cur.fetchone()[0]
-        db_conn.close()
-    except Exception as e:
-        log_warn(f"Could not inspect tables in '{target_db}': {e}")
-
-    # 4. If empty or requested, restore from backup dump
     dump_file = find_db_dump_file()
-    if table_count == 0:
-        log_info(f"Database '{target_db}' has 0 tables. Attempting automated data restoration...")
-        if dump_file and dump_file.exists():
-            log_info(f"Found backup file: {dump_file}")
-            if pg_restore_bin:
-                restore_database(pg_restore_bin, creds, dump_file)
-            else:
-                log_warn("Cannot restore automatically: 'pg_restore' is not found.")
+    if dump_file and dump_file.exists():
+        if pg_restore_bin:
+            log_info(f"Database backup dump found: {dump_file.name}. Restoring database...")
+            restore_database(pg_restore_bin, creds, dump_file)
         else:
-            log_warn("No database backup file found in project. Please provide a backup dump.")
-    else:
-        log_success(f"Database '{target_db}' already contains {table_count} tables.")
-        if dump_file:
-            log_info(f"Backup file is available at: {dump_file}")
+            log_info(f"Database backup dump available at: {dump_file.name}")
 
-    # 5. Save credentials to FYP2/.env
-    update_env_file({
-        "DB_HOST": creds["host"],
-        "DB_PORT": creds["port"],
-        "DB_USER": creds["user"],
-        "DB_PASSWORD": creds["password"],
-        "DB_NAME": creds["database"],
-    })
     return True
 
 
