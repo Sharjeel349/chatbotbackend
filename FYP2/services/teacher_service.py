@@ -465,6 +465,27 @@ def save_advisory_note(teacher_id: int, student_id: str, note_text: str, action_
         )
         note = cur.fetchone()
         db_conn.commit()
+
+        # Automatically trigger an in-app notification for the student
+        try:
+            from FYP2.services import notification_service
+            note_summary = note_text[:120] + "..." if len(note_text) > 120 else note_text
+            msg = f"Your Academic Advisor logged a note: \"{note_summary}\""
+            if action_plan:
+                msg += f"\nAction Plan: {action_plan}"
+            notification_service.create_notification(
+                student_id=student_id,
+                teacher_id=teacher_id,
+                title="Advisor Logged Counseling Note",
+                message=msg,
+                notification_type="note",
+                meeting_time=None,
+                location=None,
+                db_conn=db_conn,
+            )
+        except Exception as notif_err:
+            logger.warning(f"Could not dispatch advising note notification: {notif_err}")
+
         return note
     finally:
         cur.close()
