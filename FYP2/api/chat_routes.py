@@ -53,6 +53,32 @@ def create_message(session_id: int, request: chat_models.MessageCreateRequest, e
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/{session_id}/text", response_model=chat_models.TextChatResponse)
+@router.post("/chat/{session_id}/text", response_model=chat_models.TextChatResponse)
+async def handle_text_message(
+    session_id: int,
+    request: chat_models.TextChatRequest,
+    db=Depends(get_db),
+):
+    message = (request.message or request.text or request.message_text or "").strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    try:
+        return await run_in_threadpool(
+            voice_service.process_text_chat,
+            session_id,
+            message,
+            db,
+            request.student_id,
+            request.emotion,
+            bool(request.generate_audio),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+
 @router.post("/{session_id}/voice")
 async def handle_voice_message(
     session_id: int,
@@ -70,8 +96,12 @@ async def handle_voice_message(
     if len(audio_bytes) > 15 * 1024 * 1024:
         raise HTTPException(status_code=413, detail="Audio file must be 15 MB or smaller")
 
-    # Keep this student ID unchanged for the current prototype.
-    student_id = "2023-ARID-0274"
+    # Dynamically look up the student ID associated with this session
+    cur = db.cursor()
+    cur.execute("SELECT student_id FROM Chat_Session WHERE session_id = %s;", (session_id,))
+    session_row = cur.fetchone()
+    cur.close()
+    student_id = session_row.get("student_id") if session_row and session_row.get("student_id") else "2023-ARID-0274"
 
     if stream:
         events = voice_service.stream_voice_chat(

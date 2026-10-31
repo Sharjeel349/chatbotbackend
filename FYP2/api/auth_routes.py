@@ -15,7 +15,8 @@ def login(credentials: auth_models.LoginRequest, db=Depends(get_db)):
 
     return {
         "user_id": row["user_id"],
-        "student_id": row["student_id"],
+        "student_id": row.get("student_id"),
+        "teacher_id": row.get("teacher_id"),
         "name": row["name"],
         "role": row["role"],
         "message": "Login successful"

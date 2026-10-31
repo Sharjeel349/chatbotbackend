@@ -28,6 +28,9 @@ from FYP2.services.advisor_graph import AdvisorState, advisor_graph
 logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parents[1]
+from dotenv import load_dotenv
+load_dotenv(BASE_DIR / ".env")
+
 AUDIO_DIR = BASE_DIR / "static" / "audio"
 MODEL_CACHE_DIR = BASE_DIR / "model_cache"
 KNOWLEDGE_DIR = BASE_DIR / "knowledge"
@@ -940,22 +943,38 @@ def synthesize_speech(
     output_path: Path,
     language: str = "english",
     detected_language: str = "en",
+    preferred_voice: str | None = None,
 ) -> bool:
     try:
-        engine = pyttsx3.init()
-        engine.setProperty("rate", 155)
-        selected_voice = select_tts_voice(engine, language, detected_language)
-        if selected_voice:
-            engine.setProperty("voice", selected_voice)
-            logger.info(
-                "Selected TTS voice '%s' for language='%s' (detected='%s')",
-                selected_voice,
-                language,
-                detected_language,
-            )
-        engine.save_to_file(text, str(output_path))
-        engine.runAndWait()
-        return output_path.exists()
+        from FYP2.services import tts_voice_service
+
+        is_urdu_or_hindi = (
+            language == "roman_urdu"
+            or (bool(detected_language) and detected_language.lower() in URDU_LANGUAGE_CODES)
+            or (bool(detected_language) and detected_language.lower() in ("ur", "hi", "urdu", "hindi", "pa"))
+        )
+
+        # If student has a preferred voice saved, use it! Otherwise pick best default
+        if preferred_voice and preferred_voice.strip():
+            chosen_voice = preferred_voice.strip()
+        else:
+            chosen_voice = "Lekha" if is_urdu_or_hindi else "Samantha"
+
+        logger.info(
+            "Synthesizing speech reply with voice='%s' (language='%s', detected='%s')",
+            chosen_voice,
+            language,
+            detected_language,
+        )
+
+        # Synthesize sample or speech using robust tts_voice_service
+        wav_path, _, _ = tts_voice_service.synthesize_sample(chosen_voice, text)
+        if wav_path.exists():
+            import shutil
+            shutil.copyfile(wav_path, output_path)
+            return output_path.exists()
+
+        return False
     except Exception:
         logger.exception("Text-to-speech failed")
         return False
@@ -1125,11 +1144,29 @@ def stream_voice_chat(
 
         stage = time.perf_counter()
         yield _event("status", message="Preparing the audio reply...")
+
+        # Fetch student's preferred voice from database
+        preferred_voice = None
+        if student_id and db_conn:
+            try:
+                cur = db_conn.cursor()
+                cur.execute(
+                    "SELECT preferred_voice FROM Student WHERE sid = %s OR CAST(user_id AS TEXT) = %s;",
+                    (str(student_id), str(student_id)),
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row.get("preferred_voice"):
+                    preferred_voice = row["preferred_voice"]
+            except Exception:
+                _safe_rollback(db_conn)
+
         if not synthesize_speech(
             reply,
             bot_audio_path,
             language=language,
             detected_language=detected_language,
+            preferred_voice=preferred_voice,
         ):
             bot_audio_url = None
         timings["speech"] = round((time.perf_counter() - stage) * 1000)
@@ -1176,3 +1213,166 @@ def process_voice_chat(
         if event["type"] == "complete":
             return event["data"]
     raise RuntimeError("Voice processing ended without a response")
+
+
+def process_text_chat(
+    session_id: int,
+    message: str,
+    db_conn,
+    student_id: str | None = None,
+    emotion: str | None = None,
+    generate_audio: bool = False,
+) -> dict[str, Any]:
+    """Process a typed text message through the academic advisor graph."""
+    started = time.perf_counter()
+    timings: dict[str, int] = {}
+
+    raw_user_text = message.strip()
+    if not raw_user_text:
+        raise ValueError("Message cannot be empty")
+
+    # Look up student_id if not explicitly provided
+    if not student_id and db_conn:
+        try:
+            cur = db_conn.cursor()
+            cur.execute("SELECT student_id FROM Chat_Session WHERE session_id = %s;", (session_id,))
+            session_row = cur.fetchone()
+            cur.close()
+            if session_row and session_row.get("student_id"):
+                student_id = session_row.get("student_id")
+        except Exception:
+            _safe_rollback(db_conn)
+
+    if not student_id:
+        student_id = "2023-ARID-0274"
+
+    # Language and script detection
+    if contains_urdu_script(raw_user_text):
+        detected_language = "ur"
+        display_text = clean_and_normalize_roman_urdu(raw_user_text)
+    else:
+        lang_probe = response_language("en", raw_user_text)
+        detected_language = "ur" if lang_probe == "roman_urdu" else "en"
+        display_text = raw_user_text
+
+    language = response_language(detected_language, display_text)
+
+    # Determine emotion
+    if not emotion or emotion.strip().upper() == "NEUTRAL":
+        user_emotion = get_latest_emotion(db_conn)
+    else:
+        user_emotion = emotion.strip()
+
+    stage = time.perf_counter()
+    graph_state: AdvisorState = {
+        "query": raw_user_text,
+        "language": language,
+        "detected_language": detected_language,
+        "emotion": user_emotion,
+        "student_id": student_id,
+        "session_id": session_id,
+        "db_conn": db_conn,
+    }
+
+    reply = None
+    prompt = None
+    model = None
+
+    for event in advisor_graph.stream(graph_state):
+        if "handle_greeting" in event:
+            reply = event["handle_greeting"].get("response")
+            break
+        elif "handle_irrelevant" in event:
+            reply = event["handle_irrelevant"].get("response")
+            break
+        elif "retrieve_knowledge" in event:
+            retrieved_data = event["retrieve_knowledge"]
+            prompt = retrieved_data.get("prompt", "")
+            model = retrieved_data.get("model", OLLAMA_MODEL_ENGLISH)
+            timings["context"] = round((time.perf_counter() - stage) * 1000)
+            break
+
+    if not reply and prompt and model:
+        stage = time.perf_counter()
+        chunks: list[str] = []
+        try:
+            for token in stream_llm_reply(prompt, model):
+                chunks.append(token)
+            reply = "".join(chunks).strip()
+            if language == "roman_urdu":
+                reply = re.sub(r"\s*\([A-Za-z0-9\s,.'’?!]+\)", "", reply).strip()
+        except Exception:
+            logger.exception("Ollama generation failed for text chat")
+            reply = (
+                "AI model abhi available nahi hai, thori dair baad dobara koshish karein."
+                if language == "roman_urdu"
+                else "The AI model is unavailable. Please try again shortly."
+            )
+        timings["generation"] = round((time.perf_counter() - stage) * 1000)
+
+    if not reply:
+        reply = (
+            "Main is sawal ka jawab abhi tayar nahi kar saka."
+            if language == "roman_urdu"
+            else "I could not prepare an answer to that question."
+        )
+
+    if language == "roman_urdu" and contains_urdu_script(reply):
+        logger.warning("Model returned Urdu script despite Roman Urdu instruction")
+        reply = (
+            "Maazrat, main jawab Roman Urdu mein tayar nahi kar saka. "
+            "Meherbani karke dobara koshish karein."
+        )
+
+    bot_audio_url: str | None = None
+    if generate_audio:
+        stage = time.perf_counter()
+        unique_id = uuid.uuid4().hex
+        bot_audio_path = AUDIO_DIR / f"bot_{unique_id}.wav"
+        preferred_voice = None
+        if student_id and db_conn:
+            try:
+                cur = db_conn.cursor()
+                cur.execute(
+                    "SELECT preferred_voice FROM Student WHERE sid = %s OR CAST(user_id AS TEXT) = %s;",
+                    (str(student_id), str(student_id)),
+                )
+                row = cur.fetchone()
+                cur.close()
+                if row and row.get("preferred_voice"):
+                    preferred_voice = row["preferred_voice"]
+            except Exception:
+                _safe_rollback(db_conn)
+
+        if synthesize_speech(
+            reply,
+            bot_audio_path,
+            language=language,
+            detected_language=detected_language,
+            preferred_voice=preferred_voice,
+        ):
+            bot_audio_url = f"/static/audio/{bot_audio_path.name}"
+        timings["speech"] = round((time.perf_counter() - stage) * 1000)
+
+    save_voice_messages(
+        session_id=session_id,
+        user_text=display_text,
+        bot_text=reply,
+        user_audio_url=None,
+        bot_audio_url=bot_audio_url,
+        emotion=user_emotion,
+        db_conn=db_conn,
+    )
+    timings["total"] = round((time.perf_counter() - started) * 1000)
+
+    return {
+        "user_text": display_text,
+        "bot_text": reply,
+        "user_audio_url": None,
+        "bot_audio_url": bot_audio_url,
+        "user_emotion": user_emotion,
+        "detected_language": detected_language,
+        "response_language": language,
+        "timing_ms": timings,
+    }
+

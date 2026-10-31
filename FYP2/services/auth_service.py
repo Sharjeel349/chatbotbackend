@@ -56,9 +56,11 @@ def authenticate_user(email, password, db_conn):
         cur.execute(
             """
             SELECT u.user_id, u.name, u.email, u.role, u.password,
-                   s.sid AS student_id
+                   s.sid AS student_id,
+                   t.teacher_id
             FROM Users u
             LEFT JOIN Student s ON u.user_id = s.user_id
+            LEFT JOIN Teacher t ON u.user_id = t.user_id
             WHERE u.email = %s;
             """,
             (email,),

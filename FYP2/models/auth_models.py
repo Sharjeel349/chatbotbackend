@@ -7,7 +7,8 @@ class LoginRequest(BaseModel):
 
 class AuthResponse(BaseModel):
     user_id: int
-    student_id: Optional[str]
+    student_id: Optional[str] = None
+    teacher_id: Optional[int] = None
     name: str
     role: str
     message: str

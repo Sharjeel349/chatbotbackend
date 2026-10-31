@@ -13,8 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
 import uvicorn
 
-from FYP2.api import auth_routes, chat_routes, student_routes
-from FYP2.services import voice_service
+from FYP2.api import auth_routes, chat_routes, student_routes, teacher_routes, voice_routes
+from FYP2.services import tts_voice_service, voice_service
 
 
 logging.basicConfig(
@@ -28,6 +28,7 @@ BASE_DIR = Path(__file__).resolve().parent
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     await run_in_threadpool(voice_service.warm_up_models)
+    await run_in_threadpool(tts_voice_service.prewarm_default_voices)
     yield
 
 
@@ -41,7 +42,9 @@ app.mount(
 # Register routes
 app.include_router(auth_routes.router)
 app.include_router(student_routes.router)
+app.include_router(teacher_routes.router)
 app.include_router(chat_routes.router)
+app.include_router(voice_routes.router)
 
 
 @app.get("/")

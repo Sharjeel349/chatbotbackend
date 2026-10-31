@@ -87,3 +87,60 @@ def get_transcript(student_id: str, db_conn):
         return cur.fetchall()
     finally:
         cur.close()
+
+
+def update_student_voice_preference(student_id: str, preferred_voice: str, db_conn) -> dict:
+    cur = db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            UPDATE Student
+            SET preferred_voice = %s
+            WHERE sid = %s OR CAST(user_id AS TEXT) = %s;
+            """,
+            (preferred_voice, str(student_id), str(student_id)),
+        )
+        db_conn.commit()
+        return {
+            "status": "success",
+            "student_id": student_id,
+            "preferred_voice": preferred_voice,
+            "message": "Voice preference updated successfully.",
+        }
+    except Exception as exc:
+        try:
+            db_conn.rollback()
+        except Exception:
+            pass
+        err_msg = str(exc)
+        if "preferred_voice" in err_msg and "does not exist" in err_msg:
+            raise RuntimeError(
+                "Column 'preferred_voice' not found in table 'Student'. "
+                "Please run: ALTER TABLE Student ADD COLUMN preferred_voice VARCHAR(100) DEFAULT 'Lekha';"
+            ) from exc
+        raise
+    finally:
+        cur.close()
+
+
+def get_student_voice_preference(student_id: str, db_conn) -> str:
+    cur = db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            SELECT preferred_voice
+            FROM Student
+            WHERE sid = %s OR CAST(user_id AS TEXT) = %s;
+            """,
+            (str(student_id), str(student_id)),
+        )
+        row = cur.fetchone()
+        return row.get("preferred_voice", "Lekha") if row and row.get("preferred_voice") else "Lekha"
+    except Exception:
+        try:
+            db_conn.rollback()
+        except Exception:
+            pass
+        return "Lekha"
+    finally:
+        cur.close()
