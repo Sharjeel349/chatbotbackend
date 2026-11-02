@@ -257,16 +257,26 @@ def get_failed_courses(student_id: str, db_conn):
     try:
         cur.execute(
             """
-            SELECT c.course_id, c.title, c.skill_category, co.session,
+            SELECT DISTINCT ON (c.course_id)
+                   c.course_id, c.title, c.skill_category, co.session,
                    u_teacher.name AS teacher_name, e.grade
             FROM Enrolment e
             JOIN Course_Offering co ON e.offering_id = co.offering_id
-            JOIN Course c ON co.course_id = c.course_id
-            JOIN Teacher t ON co.teacher_id = t.teacher_id
-            JOIN Users u_teacher ON t.user_id = u_teacher.user_id
-            WHERE e.grade = 'F' AND e.student_id = %s;
+            JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
+            LEFT JOIN Teacher t ON co.teacher_id = t.teacher_id
+            LEFT JOIN Users u_teacher ON t.user_id = u_teacher.user_id
+            WHERE (e.grade = 'F' OR e.grade = 'W') AND e.student_id = %s
+              AND c.course_id NOT IN (
+                  SELECT co2.course_id
+                  FROM Enrolment e2
+                  JOIN Course_Offering co2 ON e2.offering_id = co2.offering_id
+                  WHERE e2.student_id = %s
+                    AND e2.grade IS NOT NULL
+                    AND e2.grade NOT IN ('F', 'W', 'I')
+              )
+            ORDER BY c.course_id, co.session DESC;
             """,
-            (student_id,),
+            (student_id, student_id),
         )
         return cur.fetchall()
     finally:
@@ -282,7 +292,7 @@ def get_transcript(student_id: str, db_conn):
                    e.grade, c.credit_hours
             FROM Enrolment e
             JOIN Course_Offering co ON e.offering_id = co.offering_id
-            JOIN Course c ON co.course_id = c.course_id
+            JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
             WHERE e.student_id = %s AND e.grade IS NOT NULL
             ORDER BY co.session DESC, c.title ASC
             LIMIT 8;
@@ -320,7 +330,7 @@ def get_current_enrollments(student_id: str, db_conn):
                    u.name AS teacher_name
             FROM Enrolment e
             JOIN Course_Offering co ON e.offering_id = co.offering_id
-            JOIN Course c ON co.course_id = c.course_id
+            JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
             JOIN Teacher t ON co.teacher_id = t.teacher_id
             JOIN Users u ON t.user_id = u.user_id
             WHERE e.student_id = %s AND e.grade IS NULL;
@@ -338,11 +348,12 @@ def get_course_prerequisites(db_conn):
         cur.execute(
             """
             SELECT c.course_id, c.title AS course_title,
-                   p.course_id AS prerequisite_id, p.title AS prerequisite_title
+                   p.course_id AS prerequisite_id, p.title AS prerequisite_title,
+                   cp.sos, cp.discipline
             FROM Course_Prerequisite cp
-            JOIN Course c ON cp.course_id = c.course_id
-            JOIN Course p ON cp.prerequisite_id = p.course_id
-            ORDER BY c.title ASC;
+            JOIN Course c ON cp.course_id = c.course_id AND cp.sos = c.sos
+            JOIN Course p ON cp.prerequisite_id = p.course_id AND cp.sos = p.sos
+            ORDER BY cp.sos ASC, c.title ASC;
             """
         )
         return cur.fetchall()
@@ -378,25 +389,71 @@ def get_teacher_strictness_stats(db_conn):
         cur.close()
 
 
+def _row_val(row, key: str, idx: int = 0, default=None):
+    if not row:
+        return default
+    if isinstance(row, dict):
+        return row.get(key, default)
+    try:
+        return row[idx]
+    except (IndexError, TypeError, KeyError):
+        return default
+
+
 def get_completed_credit_hours(student_id: str, db_conn):
-    """Calculates total credit hours successfully earned by the student."""
+    """Calculates total credit hours earned and degree completion progress based on the student's Scheme of Study."""
     cur = db_conn.cursor()
     try:
+        cur.execute("SELECT sos FROM Student WHERE sid = %s;", (student_id,))
+        sos_row = cur.fetchone()
+        sos = _row_val(sos_row, "sos", 0)
+
         cur.execute(
             """
             SELECT COALESCE(SUM(c.credit_hours), 0) AS completed_credits,
                    COUNT(DISTINCT c.course_id) AS total_passed_courses
             FROM Enrolment e
             JOIN Course_Offering co ON e.offering_id = co.offering_id
-            JOIN Course c ON co.course_id = c.course_id
+            JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
             WHERE e.student_id = %s 
               AND e.grade IS NOT NULL 
               AND e.grade <> 'F';
             """,
             (student_id,),
         )
-        row = cur.fetchone()
-        return row if row else {"completed_credits": 0, "total_passed_courses": 0}
+        row = cur.fetchone() or {"completed_credits": 0, "total_passed_courses": 0}
+        completed_credits = int(_row_val(row, "completed_credits", 0, 0))
+        total_passed_courses = int(_row_val(row, "total_passed_courses", 1, 0))
+
+        total_sos_credits = 0
+        total_sos_courses = 0
+        if sos:
+            cur.execute(
+                """
+                SELECT COALESCE(SUM(credit_hours), 0) AS total_credits,
+                       COUNT(*) AS total_courses
+                FROM Course
+                WHERE sos = %s;
+                """,
+                (sos,),
+            )
+            sos_stats = cur.fetchone()
+            if sos_stats:
+                total_sos_credits = int(_row_val(sos_stats, "total_credits", 0, 0))
+                total_sos_courses = int(_row_val(sos_stats, "total_courses", 1, 0))
+
+        remaining_credits = max(0, total_sos_credits - completed_credits) if total_sos_credits > 0 else 0
+        pct = round((completed_credits / total_sos_credits * 100), 1) if total_sos_credits > 0 else 0.0
+
+        return {
+            "completed_credits": completed_credits,
+            "total_passed_courses": total_passed_courses,
+            "student_sos": sos,
+            "total_degree_credits": total_sos_credits,
+            "total_degree_courses": total_sos_courses,
+            "remaining_credits_to_graduate": remaining_credits,
+            "degree_progress": f"{pct}%",
+        }
     except Exception:
         _safe_rollback(db_conn)
         logger.exception("Could not fetch completed credit hours")
@@ -411,10 +468,10 @@ def get_improvable_courses(student_id: str, db_conn):
     try:
         cur.execute(
             """
-            SELECT c.course_id, c.title AS course_title, c.credit_hours, e.grade, co.session
+            SELECT c.course_id, c.title AS course_title, c.credit_hours, e.grade, e.attempt, co.session
             FROM Enrolment e
             JOIN Course_Offering co ON e.offering_id = co.offering_id
-            JOIN Course c ON co.course_id = c.course_id
+            JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
             WHERE e.student_id = %s 
               AND e.grade IN ('D', 'F')
             ORDER BY e.grade DESC, c.title ASC;
@@ -440,7 +497,7 @@ def get_current_teachers_and_courses(student_id: str, db_conn):
                    u.name AS teacher_name, t.designation, t.department
             FROM Enrolment e
             JOIN Course_Offering co ON e.offering_id = co.offering_id
-            JOIN Course c ON co.course_id = c.course_id
+            JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
             JOIN Teacher t ON co.teacher_id = t.teacher_id
             JOIN Users u ON t.user_id = u.user_id
             WHERE e.student_id = %s AND e.grade IS NULL
@@ -458,9 +515,13 @@ def get_current_teachers_and_courses(student_id: str, db_conn):
 
 
 def check_student_prerequisite_status(student_id: str, db_conn):
-    """Checks all prerequisites and flags whether the student has passed them or not."""
+    """Checks prerequisites specifically for the student's Scheme of Study and flags pass/fail/eligible status."""
     cur = db_conn.cursor()
     try:
+        cur.execute("SELECT sos FROM Student WHERE sid = %s;", (student_id,))
+        srow = cur.fetchone()
+        sos = _row_val(srow, "sos", 0)
+
         cur.execute(
             """
             SELECT 
@@ -468,6 +529,8 @@ def check_student_prerequisite_status(student_id: str, db_conn):
                 target_c.title AS target_course_title,
                 prereq_c.course_id AS prereq_course_id,
                 prereq_c.title AS prereq_course_title,
+                cp.sos,
+                cp.discipline,
                 COALESCE((
                     SELECT e.grade 
                     FROM Enrolment e 
@@ -489,11 +552,12 @@ def check_student_prerequisite_status(student_id: str, db_conn):
                     ELSE 'Not Eligible'
                 END AS eligibility_status
             FROM Course_Prerequisite cp
-            JOIN Course target_c ON cp.course_id = target_c.course_id
-            JOIN Course prereq_c ON cp.prerequisite_id = prereq_c.course_id
+            JOIN Course target_c ON cp.course_id = target_c.course_id AND cp.sos = target_c.sos
+            JOIN Course prereq_c ON cp.prerequisite_id = prereq_c.course_id AND cp.sos = prereq_c.sos
+            WHERE (%s IS NULL OR cp.sos = %s)
             ORDER BY target_c.title ASC;
             """,
-            (student_id, student_id),
+            (student_id, student_id, sos, sos),
         )
         return cur.fetchall()
     except Exception:
@@ -536,7 +600,7 @@ def get_current_semester_load(student_id: str, db_conn):
                    COUNT(DISTINCT c.course_id) AS total_enrolled_courses
             FROM Enrolment e
             JOIN Course_Offering co ON e.offering_id = co.offering_id
-            JOIN Course c ON co.course_id = c.course_id
+            JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
             WHERE e.student_id = %s AND e.grade IS NULL;
             """,
             (student_id,),
@@ -547,6 +611,199 @@ def get_current_semester_load(student_id: str, db_conn):
         _safe_rollback(db_conn)
         logger.exception("Could not fetch current semester load")
         return {"total_enrolled_credits": 0, "total_enrolled_courses": 0}
+    finally:
+        cur.close()
+
+
+def get_student_attempt_warnings(student_id: str, db_conn) -> list[dict[str, Any]]:
+    """Tracks student repeat course attempts from enrolment.attempt and flags academic repeat warnings."""
+    cur = db_conn.cursor()
+    try:
+        query = """
+            SELECT 
+                co.course_id,
+                c.title AS course_title,
+                MAX(e.attempt) AS highest_attempt,
+                COUNT(e.enrolment_id) AS total_enrolments,
+                ARRAY_AGG(DISTINCT e.grade) FILTER (WHERE e.grade IS NOT NULL) AS recorded_grades,
+                BOOL_OR(e.grade IS NOT NULL AND e.grade <> 'F') AS has_passed_course
+            FROM Enrolment e
+            JOIN Course_Offering co ON e.offering_id = co.offering_id
+            JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
+            WHERE e.student_id = %s
+            GROUP BY co.course_id, c.title
+            HAVING MAX(e.attempt) >= 2 OR COUNT(e.enrolment_id) >= 2
+            ORDER BY MAX(e.attempt) DESC, c.title ASC;
+        """
+        cur.execute(query, (student_id,))
+        rows = cur.fetchall()
+        warnings = []
+        for r in rows:
+            attempt_num = int(_row_val(r, "highest_attempt", 2, 1))
+            passed = bool(_row_val(r, "has_passed_course", 5, False))
+            status = "Passed on Repeat" if passed else "Action Required: Currently Unresolved"
+            urgency = "High Warning (3+ attempts)" if attempt_num >= 3 else "Repeat Warning (Attempt 2)"
+            warnings.append({
+                "course_id": _row_val(r, "course_id", 0),
+                "course_title": _row_val(r, "course_title", 1),
+                "attempts": attempt_num,
+                "grades": _row_val(r, "recorded_grades", 4),
+                "status": status,
+                "warning_level": urgency,
+            })
+        return warnings
+    except Exception:
+        _safe_rollback(db_conn)
+        logger.exception("Could not fetch student attempt warnings")
+        return []
+    finally:
+        cur.close()
+
+
+def get_next_semester_course_recommendations(student_id: str, db_conn) -> dict[str, Any]:
+    """Recommends next semester subjects based on student's Scheme of Study, passed courses, and prerequisites."""
+    cur = db_conn.cursor()
+    try:
+        # 1. Fetch student SOS, semester, and discipline
+        cur.execute(
+            """
+            SELECT s.sid, s.sos, cs.semester, cs.discipline
+            FROM Student s
+            JOIN Class_Section cs ON s.section_id = cs.section_id
+            WHERE s.sid = %s;
+            """,
+            (student_id,),
+        )
+        st_row = cur.fetchone()
+        if not st_row:
+            return {}
+        sos = _row_val(st_row, "sos", 1)
+        current_semester = _row_val(st_row, "semester", 2, "")
+        discipline = _row_val(st_row, "discipline", 3, "")
+
+        if not sos:
+            return {"error": "Student Scheme of Study (SOS) not assigned."}
+
+        # 2. Passed courses
+        cur.execute(
+            """
+            SELECT DISTINCT co.course_id
+            FROM Enrolment e
+            JOIN Course_Offering co ON e.offering_id = co.offering_id
+            WHERE e.student_id = %s AND e.grade IS NOT NULL AND e.grade <> 'F';
+            """,
+            (student_id,),
+        )
+        passed_courses = set(_row_val(r, "course_id", 0) for r in cur.fetchall())
+
+        # 3. Currently registered courses (ongoing semester)
+        cur.execute(
+            """
+            SELECT DISTINCT co.course_id
+            FROM Enrolment e
+            JOIN Course_Offering co ON e.offering_id = co.offering_id
+            WHERE e.student_id = %s AND e.grade IS NULL;
+            """,
+            (student_id,),
+        )
+        currently_enrolled = set(_row_val(r, "course_id", 0) for r in cur.fetchall())
+
+        # 4. Failed courses not yet cleared
+        cur.execute(
+            """
+            SELECT DISTINCT co.course_id, c.title
+            FROM Enrolment e
+            JOIN Course_Offering co ON e.offering_id = co.offering_id
+            JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
+            WHERE e.student_id = %s AND e.grade = 'F'
+              AND co.course_id NOT IN (
+                  SELECT co2.course_id 
+                  FROM Enrolment e2 
+                  JOIN Course_Offering co2 ON e2.offering_id = co2.offering_id
+                  WHERE e2.student_id = %s AND e2.grade IS NOT NULL AND e2.grade <> 'F'
+              );
+            """,
+            (student_id, student_id),
+        )
+        unresolved_fails = [
+            {"course_id": _row_val(r, "course_id", 0),
+             "title": _row_val(r, "title", 1)}
+            for r in cur.fetchall()
+        ]
+
+        # 5. All courses prescribed in student's SOS
+        cur.execute(
+            """
+            SELECT course_id, title, credit_hours, course_type, skill_category
+            FROM Course
+            WHERE sos = %s
+            ORDER BY course_id ASC;
+            """,
+            (sos,),
+        )
+        sos_courses = cur.fetchall()
+
+        # 6. Prerequisites mapped for student's SOS
+        cur.execute(
+            """
+            SELECT course_id, prerequisite_id
+            FROM Course_Prerequisite
+            WHERE sos = %s;
+            """,
+            (sos,),
+        )
+        prereq_map: dict[str, list[str]] = {}
+        for r in cur.fetchall():
+            cid = _row_val(r, "course_id", 0)
+            pid = _row_val(r, "prerequisite_id", 1)
+            prereq_map.setdefault(cid, []).append(pid)
+
+        # 7. Categorize remaining courses
+        remaining_courses = [
+            c for c in sos_courses 
+            if _row_val(c, "course_id", 0) not in passed_courses 
+            and _row_val(c, "course_id", 0) not in currently_enrolled
+        ]
+
+        eligible_next = []
+        locked_courses = []
+
+        for c in remaining_courses:
+            cid = _row_val(c, "course_id", 0)
+            title = _row_val(c, "title", 1)
+            cr = int(_row_val(c, "credit_hours", 2, 3))
+            ctype = _row_val(c, "course_type", 3, "REQUIRED")
+
+            reqs = prereq_map.get(cid, [])
+            missing_prereqs = [r for r in reqs if r not in passed_courses]
+
+            if not missing_prereqs:
+                eligible_next.append({
+                    "course_id": cid,
+                    "title": title,
+                    "credit_hours": cr,
+                    "course_type": ctype,
+                })
+            else:
+                locked_courses.append({
+                    "course_id": cid,
+                    "title": title,
+                    "missing_prerequisites": missing_prereqs,
+                })
+
+        return {
+            "student_sos": sos,
+            "current_semester": current_semester,
+            "discipline": discipline,
+            "total_passed_courses": len(passed_courses),
+            "unresolved_failed_courses_to_repeat": unresolved_fails,
+            "eligible_courses_to_study_next": eligible_next[:10],
+            "locked_courses_needing_prerequisites": locked_courses[:10],
+        }
+    except Exception:
+        _safe_rollback(db_conn)
+        logger.exception("Could not compute next semester course recommendations")
+        return {}
     finally:
         cur.close()
 
@@ -703,6 +960,31 @@ def build_student_context(
     ):
         context["transcript"] = get_transcript(student_id, db_conn)
 
+    # 8. Next Semester Courses & Roadmap (Based on Student SOS and Prerequisites)
+    if _mentions(
+        query,
+        {
+            "next", "study next", "future", "remaining", "roadmap", "what to take",
+            "take next", "subjects next", "courses next", "kon se parhne", "agay",
+            "aglay", "parhna", "parhoon", "bache huay", "next semester", "konsay",
+            "subjects", "courses", "recommend", "suggestion", "advice",
+            "آگے", "اگلے", "پڑھنا"
+        },
+    ):
+        context["next_semester_course_recommendations"] = get_next_semester_course_recommendations(student_id, db_conn)
+        if "completed_credits_summary" not in context:
+            context["completed_credits_summary"] = get_completed_credit_hours(student_id, db_conn)
+
+    # 9. Course Attempt & Repeat Warning Agent
+    if _mentions(
+        query,
+        {
+            "attempt", "attempts", "repeat", "warning", "fail", "failed", "danger",
+            "risk", "probation", "expel", "max attempts", "dobara", "ریپیٹ", "وارننگ"
+        },
+    ):
+        context["attempt_warnings"] = get_student_attempt_warnings(student_id, db_conn)
+
     return _plain(context)
 
 
@@ -826,6 +1108,14 @@ STYLE:
 - Answer the student's exact question directly and first.
 - Do NOT give unsolicited warnings or lectures about workload or grades unless the student specifically asks for evaluation.
 - Never invent a student fact or university rule.
+
+ACADEMIC ADVISING GUIDELINES:
+- When advising what subjects to take or study next, check 'next_semester_course_recommendations' in STUDENT_CONTEXT_JSON.
+- Always check if the student has 'unresolved_failed_courses_to_repeat'; advise them to prioritize repeating failed prerequisite courses first.
+- Recommend courses listed in 'eligible_courses_to_study_next' (their prerequisites are already passed).
+- If they ask about taking a course listed in 'locked_courses_needing_prerequisites', clearly explain what prerequisite course they must pass first.
+- Mention their Scheme of Study (SOS) and degree completion progress when relevant.
+- If 'attempt_warnings' shows 2 or more attempts on a course, counsel them gently regarding repeat course policies.
 
 STUDENT_CONTEXT_JSON:
 {json.dumps(context, ensure_ascii=False, default=str, separators=(",", ":"))}

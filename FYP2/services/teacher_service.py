@@ -99,15 +99,24 @@ def get_teacher_advisees(teacher_id: int, db_conn) -> List[Dict[str, Any]]:
                 cs.semester,
                 s.cgpa,
                 COALESCE((
-                    SELECT COUNT(*) 
-                    FROM Enrolment e 
-                    WHERE e.student_id = s.sid AND e.grade = 'F'
+                    SELECT COUNT(DISTINCT co_f.course_id) 
+                    FROM Enrolment e_f 
+                    JOIN Course_Offering co_f ON e_f.offering_id = co_f.offering_id
+                    WHERE e_f.student_id = s.sid AND (e_f.grade = 'F' OR e_f.grade = 'W')
+                      AND co_f.course_id NOT IN (
+                          SELECT co_p.course_id
+                          FROM Enrolment e_p
+                          JOIN Course_Offering co_p ON e_p.offering_id = co_p.offering_id
+                          WHERE e_p.student_id = s.sid
+                            AND e_p.grade IS NOT NULL
+                            AND e_p.grade NOT IN ('F', 'W', 'I')
+                      )
                 ), 0) AS failed_courses_count,
                 COALESCE((
                     SELECT SUM(c.credit_hours)
                     FROM Enrolment e
                     JOIN Course_Offering co ON e.offering_id = co.offering_id
-                    JOIN Course c ON co.course_id = c.course_id
+                    JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
                     WHERE e.student_id = s.sid AND e.grade IS NOT NULL AND e.grade <> 'F'
                 ), 0) AS completed_credits
             FROM Class_Section cs
@@ -169,13 +178,21 @@ def get_at_risk_students(teacher_id: int, db_conn) -> List[Dict[str, Any]]:
             # Fetch specific failed courses
             cur.execute(
                 """
-                SELECT c.title 
+                SELECT DISTINCT c.title 
                 FROM Enrolment e
                 JOIN Course_Offering co ON e.offering_id = co.offering_id
-                JOIN Course c ON co.course_id = c.course_id
-                WHERE e.student_id = %s AND e.grade = 'F';
+                JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
+                WHERE e.student_id = %s AND (e.grade = 'F' OR e.grade = 'W')
+                  AND co.course_id NOT IN (
+                      SELECT co2.course_id
+                      FROM Enrolment e2
+                      JOIN Course_Offering co2 ON e2.offering_id = co2.offering_id
+                      WHERE e2.student_id = %s
+                        AND e2.grade IS NOT NULL
+                        AND e2.grade NOT IN ('F', 'W', 'I')
+                  );
                 """,
-                (sid,),
+                (sid, sid),
             )
             failed_titles = [row["title"] for row in cur.fetchall()]
 
@@ -346,7 +363,7 @@ def get_teacher_courses(teacher_id: int, db_conn) -> List[Dict[str, Any]]:
                 cs.section_code,
                 COUNT(e.enrolment_id) AS enrolled_count
             FROM Course_Offering co
-            JOIN Course c ON co.course_id = c.course_id
+            JOIN Course c ON co.course_id = c.course_id AND co.sos = c.sos
             JOIN Class_Section cs ON co.section_id = cs.section_id
             LEFT JOIN Enrolment e ON co.offering_id = e.offering_id
             WHERE co.teacher_id = %s

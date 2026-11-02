@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
-from typing import List
+from typing import List, Optional
 from FYP2.core.database import get_db
 from FYP2.models import academic_models, teacher_models
 from FYP2.services import student_service
@@ -14,7 +14,7 @@ def get_profile(student_id: str, db=Depends(get_db)):
     return row
 
 @router.get("/{student_id}/offered-courses", response_model=List[academic_models.OfferedCourse])
-def get_offered_courses(student_id: str, session_name: str = "Fall 2024", db=Depends(get_db)):
+def get_offered_courses(student_id: str, session_name: Optional[str] = None, db=Depends(get_db)):
     return student_service.get_offered_courses(student_id, session_name, db)
 
 @router.get("/{student_id}/dropped-courses", response_model=List[academic_models.DroppedCourse])
