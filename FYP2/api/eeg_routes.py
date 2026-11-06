@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from FYP2.EEGHANDLING import eegsteam
+from FYP2.EEGHANDLING import eegstream
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ def stream_eeg_data(payload: EEGStreamPayload):
         raise HTTPException(status_code=400, detail="EEG samples cannot be empty")
 
     try:
-        eegsteam.process_and_save_eeg_stream(
+        eegstream.process_and_save_eeg_stream(
             buffer=payload.samples,
             session_id=payload.session_id,
         )

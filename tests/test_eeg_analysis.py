@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from FYP2.EEGHANDLING.eegsteam import analyze_30s_data, get_channel_names, DEFAULT_MUSE_5NODE_CHANNELS
+from FYP2.EEGHANDLING.eegstream import analyze_30s_data, get_channel_names, DEFAULT_MUSE_5NODE_CHANNELS
 
 
 class EEGAnalysisTests(unittest.TestCase):

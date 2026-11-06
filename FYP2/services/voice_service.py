@@ -33,7 +33,6 @@ load_dotenv(BASE_DIR / ".env")
 
 AUDIO_DIR = BASE_DIR / "static" / "audio"
 MODEL_CACHE_DIR = BASE_DIR / "model_cache"
-KNOWLEDGE_DIR = BASE_DIR / "knowledge"
 AUDIO_DIR.mkdir(parents=True, exist_ok=True)
 MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -113,11 +112,6 @@ def is_hallucination(text: str) -> bool:
         if re.search(r"\b(\w+)(?:\s+\1){3,}\b", text, re.IGNORECASE):
             return True
     return False
-
-
-def convert_to_roman_urdu_offline(text: str) -> str:
-    """Robust conversion of Urdu script to natural Roman Urdu using roman_urdu_service."""
-    return transliterate_urdu_to_roman(text)
 
 
 def response_language(language_code: str, transcript: str) -> str:
@@ -1013,27 +1007,6 @@ def build_student_context(
         context["attempt_warnings"] = get_student_attempt_warnings(student_id, db_conn)
 
     return _plain(context)
-
-
-@lru_cache(maxsize=1)
-def _knowledge_sections() -> list[str]:
-    sections: list[str] = []
-    for path in sorted(KNOWLEDGE_DIR.glob("*.md")):
-        text = path.read_text(encoding="utf-8")
-        sections.extend(
-            section.strip()
-            for section in re.split(r"\n(?=## )", text)
-            if section.strip()
-        )
-    return sections
-
-
-_RETRIEVAL_STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from",
-    "have", "has", "how", "i", "if", "in", "is", "it", "me", "my", "of", "on", "or",
-    "the", "to", "what", "when", "where", "which", "who", "why", "will", "with", "you",
-    "kya", "hai", "hain", "ka", "ki", "ke", "ko", "se", "me", "mein", "par",
-}
 
 
 from FYP2.services.knowledge_service import retrieve_policy_knowledge
