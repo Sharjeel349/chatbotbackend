@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
 import uvicorn
 
-from FYP2.api import auth_routes, chat_routes, notification_routes, student_routes, teacher_routes, voice_routes
+from FYP2.api import auth_routes, chat_routes, eeg_routes, notification_routes, student_routes, teacher_routes, voice_routes
 from FYP2.services import tts_voice_service, voice_service
 
 
@@ -45,6 +45,7 @@ app.include_router(student_routes.router)
 app.include_router(teacher_routes.router)
 app.include_router(chat_routes.router)
 app.include_router(voice_routes.router)
+app.include_router(eeg_routes.router)
 app.include_router(notification_routes.router)
 
 

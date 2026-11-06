@@ -214,14 +214,41 @@ def _safe_rollback(db_conn) -> None:
         logger.exception("Database rollback failed")
 
 
-def get_latest_emotion(db_conn) -> str:
+def get_latest_emotion(db_conn, session_id: int | None = None) -> str:
     cur = db_conn.cursor()
     try:
+        def _extract_state(row):
+            if not row:
+                return None
+            if isinstance(row, dict):
+                return row.get("mind_state") or row.get("mind_State")
+            if isinstance(row, (tuple, list)) and len(row) > 0:
+                return row[0]
+            return getattr(row, "mind_state", None)
+
+        if session_id:
+            cur.execute(
+                "SELECT mind_state FROM eeg_state WHERE session_id = %s ORDER BY eeg_state_id DESC LIMIT 1",
+                (session_id,)
+            )
+            state = _extract_state(cur.fetchone())
+            if state:
+                return state
+
+            # Fallback to latest live data if the 30-second window has not completed yet
+            cur.execute(
+                "SELECT mind_state FROM eeg_live_data WHERE session_id = %s ORDER BY eeg_data_id DESC LIMIT 1",
+                (session_id,)
+            )
+            state = _extract_state(cur.fetchone())
+            if state:
+                return state
+
         cur.execute(
-            "SELECT mind_State FROM EEG_State ORDER BY eeg_state_id DESC LIMIT 1"
+            "SELECT mind_state FROM eeg_state ORDER BY eeg_state_id DESC LIMIT 1"
         )
-        row = cur.fetchone()
-        return row.get("mind_state", "Neutral") if row else "Neutral"
+        state = _extract_state(cur.fetchone())
+        return state if state else "Neutral"
     except Exception:
         _safe_rollback(db_conn)
         logger.exception("Could not fetch the latest EEG state")
@@ -1357,7 +1384,7 @@ def stream_voice_chat(
         else:
             stage = time.perf_counter()
             yield _event("status", message="Analyzing query with academic advisor graph...")
-            emotion = get_latest_emotion(db_conn)
+            emotion = get_latest_emotion(db_conn, session_id=session_id)
 
             graph_state: AdvisorState = {
                 "query": raw_user_text,
@@ -1549,7 +1576,7 @@ def process_text_chat(
 
     # Determine emotion
     if not emotion or emotion.strip().upper() == "NEUTRAL":
-        user_emotion = get_latest_emotion(db_conn)
+        user_emotion = get_latest_emotion(db_conn, session_id=session_id)
     else:
         user_emotion = emotion.strip()
 
