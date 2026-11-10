@@ -256,19 +256,29 @@ def get_eeg_cognitive_analytics(teacher_id: int, db_conn) -> Dict[str, Any]:
             st = str(mc["state"]).strip().upper()
             raw_map[st] = raw_map.get(st, 0) + mc["count"]
 
-        focused_cnt = raw_map.get("CALM", 0) + raw_map.get("FOCUSED", 0) + raw_map.get("ATTENTIVE", 0)
+        calm_cnt = raw_map.get("CALM", 0)
+        focused_cnt = raw_map.get("FOCUSED", 0) + raw_map.get("ATTENTIVE", 0)
         neutral_cnt = raw_map.get("NEUTRAL", 0)
-        confused_cnt = raw_map.get("CONFUSED", 0)
-        stressed_cnt = raw_map.get("STRESSED", 0)
+        mild_stress_cnt = raw_map.get("MILD STRESS", 0)
+        mod_stress_cnt = raw_map.get("MODERATE STRESS", 0)
+        severe_stress_cnt = raw_map.get("SEVERE STRESS", 0) + raw_map.get("STRESSED", 0)
 
-        total_normalized = focused_cnt + neutral_cnt + confused_cnt + stressed_cnt or 1
+        total_normalized = (
+            calm_cnt + focused_cnt + neutral_cnt + mild_stress_cnt + mod_stress_cnt + severe_stress_cnt
+        ) or 1
         percentages = {
+            "Calm": round((calm_cnt / total_normalized) * 100, 1),
             "Focused": round((focused_cnt / total_normalized) * 100, 1),
             "Neutral": round((neutral_cnt / total_normalized) * 100, 1),
-            "Confused": round((confused_cnt / total_normalized) * 100, 1),
-            "Stressed": round((stressed_cnt / total_normalized) * 100, 1),
+            "Mild Stress": round((mild_stress_cnt / total_normalized) * 100, 1),
+            "Moderate Stress": round((mod_stress_cnt / total_normalized) * 100, 1),
+            "Severe Stress": round((severe_stress_cnt / total_normalized) * 100, 1),
+            "Stressed": round(((mild_stress_cnt + mod_stress_cnt + severe_stress_cnt) / total_normalized) * 100, 1),
         }
-        dominant_state = max(percentages, key=percentages.get)
+        dominant_state = max(
+            {k: v for k, v in percentages.items() if k != "Stressed"},
+            key=lambda k: percentages[k],
+        )
 
         # 3. Fetch real recent student telemetry records from DB
         cur.execute(

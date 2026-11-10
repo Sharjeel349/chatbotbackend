@@ -3,7 +3,7 @@ from typing import List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from FYP2.EEGHANDLING import eegstream
+from FYP2.EEGHANDLING import eegstream, updated_eeg_schema
 
 logger = logging.getLogger(__name__)
 
@@ -24,14 +24,16 @@ class EEGStreamResponse(BaseModel):
 def stream_eeg_data(payload: EEGStreamPayload):
     """
     Receives raw EEG microvolt sample buffers streamed from the iOS app,
-    processes them via eegstream.py FFT, and writes to EEG_State and EEG_Live_Data.
+    processes them via updated_eeg_schema.py FFT (using the updated 6-state logic),
+    writes continuous points to eeg_live_data, and saves 30-second aggregated
+    emotions to eeg_state.
     Does NOT return mindstate/metrics to iOS (as requested); iOS simply keeps the green icon connected.
     """
     if not payload.samples:
         raise HTTPException(status_code=400, detail="EEG samples cannot be empty")
 
     try:
-        eegstream.process_and_save_eeg_stream(
+        updated_eeg_schema.process_and_save_eeg_stream(
             buffer=payload.samples,
             session_id=payload.session_id,
         )

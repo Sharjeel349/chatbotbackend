@@ -369,14 +369,14 @@ def main():
 
     print("Looking for Muse EEG stream... (Make sure 'muselsl stream' is running)")
     try:
-        from pylsl import StreamInlet, resolve_stream
+        from pylsl import StreamInlet, resolve_byprop
     except ImportError:
         print("❌ pylsl is not installed. Please run: pip install pylsl (or run with --simulate)")
         return
 
     # Check for active stream with 3-second timeout instead of blocking forever
     try:
-        streams = resolve_stream("type", "EEG", timeout=3.0)
+        streams = resolve_byprop("type", "EEG", timeout=3.0)
     except Exception as e:
         print(f"⚠️ LSL stream lookup error: {e}")
         streams = []
