@@ -82,12 +82,14 @@ STATE_COLORS: dict[int, str] = {
 }
 COLOR_RESET = "\033[0m"
 
-# Classification Thresholds (Beta/Alpha Ratio & Engagement Index)
-STRESS_SEVERE_BAR = 2.8      # Beta / Alpha >= 2.8 => Severe Stress (State 6)
-STRESS_MODERATE_BAR = 2.0    # Beta / Alpha >= 2.0 => Moderate Stress (State 5)
-STRESS_MILD_BAR = 1.5        # Beta / Alpha >= 1.5 => Mild Stress (State 4)
-CALM_BAR = 0.75              # Beta / Alpha < 0.75 => Calm (State 2)
-FOCUS_EAR = 0.45             # Beta / (Alpha + Theta) >= 0.45 with moderate BAR => Focused (State 3)
+# Unified 1-Ratio Ladder Thresholds (Ratio = Beta / Alpha)
+# Low Arousal -> Calm | Baseline -> Neutral | Engaged -> Focused | Excessive -> Stress
+RATIO_CALM = 0.75             # Ratio < 0.75         => State 2: Calm
+RATIO_NEUTRAL_MAX = 1.15      # 0.75 <= Ratio < 1.15 => State 1: Neutral
+RATIO_FOCUSED_MAX = 1.65      # 1.15 <= Ratio < 1.65 => State 3: Focused
+RATIO_MILD_STRESS_MAX = 2.40  # 1.65 <= Ratio < 2.40 => State 4: Mild Stress
+RATIO_MOD_STRESS_MAX = 3.00   # 2.40 <= Ratio < 3.00 => State 5: Moderate Stress
+                              # Ratio >= 3.00        => State 6: Severe Stress
 
 
 @dataclass
@@ -121,43 +123,33 @@ def classify_brain_state(alpha: float, beta: float, theta: float) -> tuple[int, 
     Evaluates Alpha, Beta, and Theta powers and returns:
         (state_code, state_name, beta_alpha_ratio, engagement_ratio)
 
-    States:
-        1 => Neutral
-        2 => Calm
-        3 => Focused
-        4 => Mild Stress
-        5 => Moderate Stress
-        6 => Severe Stress
+    Unified 1-Ratio Ladder (Ratio = Beta / Alpha):
+        1 => Neutral           (0.75 <= Ratio < 1.15)
+        2 => Calm              (Ratio < 0.75)
+        3 => Focused           (1.15 <= Ratio < 1.65)
+        4 => Mild Stress       (1.65 <= Ratio < 2.40)
+        5 => Moderate Stress   (2.40 <= Ratio < 3.00)
+        6 => Severe Stress     (Ratio >= 3.00)
     """
-    # Protect against division by zero
     safe_alpha = max(alpha, 1e-9)
     safe_sum = max(alpha + theta, 1e-9)
 
-    bar = float(beta / safe_alpha)              # Beta / Alpha Ratio
-    ear = float(beta / safe_sum)                # Engagement Ratio: Beta / (Alpha + Theta)
-    total_power = max(alpha + beta + theta, 1e-9)
-    alpha_prop = float(alpha / total_power)     # Proportion of Alpha
+    bar = float(beta / safe_alpha)              # Primary Beta / Alpha Ratio
+    ear = float(beta / safe_sum)                # Secondary Engagement Index
 
-    # 1. Stress Hierarchy (Severe -> Moderate -> Mild)
-    if bar >= STRESS_SEVERE_BAR:
+    # Unified 1-Ratio Hierarchical Ladder
+    if bar >= RATIO_MOD_STRESS_MAX:
         return STATE_SEVERE_STRESS, STATE_NAMES[STATE_SEVERE_STRESS], bar, ear
-
-    if bar >= STRESS_MODERATE_BAR:
+    elif bar >= RATIO_MILD_STRESS_MAX:
         return STATE_MODERATE_STRESS, STATE_NAMES[STATE_MODERATE_STRESS], bar, ear
-
-    if bar >= STRESS_MILD_BAR:
+    elif bar >= RATIO_FOCUSED_MAX:
         return STATE_MILD_STRESS, STATE_NAMES[STATE_MILD_STRESS], bar, ear
-
-    # 2. Calm State (Dominant Alpha, Low Beta)
-    if bar < CALM_BAR or (alpha_prop >= 0.45 and bar < 0.90):
-        return STATE_CALM, STATE_NAMES[STATE_CALM], bar, ear
-
-    # 3. Focused State (Active Beta, Controlled Theta, High Engagement, No Stress)
-    if ear >= FOCUS_EAR and theta <= beta * 1.1 and bar >= 1.0:
+    elif bar >= RATIO_NEUTRAL_MAX:
         return STATE_FOCUSED, STATE_NAMES[STATE_FOCUSED], bar, ear
-
-    # 4. Neutral Baseline (Balanced activity)
-    return STATE_NEUTRAL, STATE_NAMES[STATE_NEUTRAL], bar, ear
+    elif bar >= RATIO_CALM:
+        return STATE_NEUTRAL, STATE_NAMES[STATE_NEUTRAL], bar, ear
+    else:
+        return STATE_CALM, STATE_NAMES[STATE_CALM], bar, ear
 
 
 def compute_spectral_powers(
@@ -719,22 +711,22 @@ def run_simulation(
             # Determine which state phase we are in (cycles every 6 epochs)
             phase = (epoch_idx - 1) % 6
             if phase == 0:
-                # 1 => Neutral
+                # 1 => Neutral (Ratio ~0.94, range: 0.75-1.15)
                 a_amp, b_amp, th_amp = 11.0, 10.5, 15.0
             elif phase == 1:
-                # 2 => Calm
+                # 2 => Calm (Ratio ~0.05, range: < 0.75)
                 a_amp, b_amp, th_amp = 22.0, 5.0, 8.0
             elif phase == 2:
-                # 3 => Focused
-                a_amp, b_amp, th_amp = 11.0, 11.5, 4.0
+                # 3 => Focused (Ratio ~1.29, range: 1.15-1.65)
+                a_amp, b_amp, th_amp = 11.0, 12.5, 4.0
             elif phase == 3:
-                # 4 => Mild Stress
-                a_amp, b_amp, th_amp = 10.0, 13.0, 8.0
+                # 4 => Mild Stress (Ratio ~1.80, range: 1.65-2.40)
+                a_amp, b_amp, th_amp = 10.0, 13.5, 8.0
             elif phase == 4:
-                # 5 => Moderate Stress
+                # 5 => Moderate Stress (Ratio ~2.67, range: 2.40-3.00)
                 a_amp, b_amp, th_amp = 9.0, 14.5, 7.0
             else:
-                # 6 => Severe Stress
+                # 6 => Severe Stress (Ratio ~5.23, range: >= 3.00)
                 a_amp, b_amp, th_amp = 7.0, 16.0, 5.0
 
             time_axis = np.linspace(t, t + dt, chunk_samples, endpoint=False)

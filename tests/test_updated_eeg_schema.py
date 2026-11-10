@@ -24,35 +24,41 @@ class TestUpdatedEEGSchema(unittest.TestCase):
         self.assertEqual(STATE_NAMES[STATE_SEVERE_STRESS], "Severe Stress")
 
     def test_state_classification_cases(self):
-        # 1. Neutral (balanced resting baseline)
-        code, name, bar, ear = classify_brain_state(alpha=12.0, beta=10.0, theta=14.0)
+        # 1. Neutral (0.75 <= Ratio < 1.15)
+        code, name, bar, ear = classify_brain_state(alpha=10.0, beta=9.0, theta=10.0)
         self.assertEqual(code, STATE_NEUTRAL)
         self.assertEqual(name, "Neutral")
+        self.assertAlmostEqual(bar, 0.90)
 
-        # 2. Calm (dominant alpha)
-        code, name, bar, ear = classify_brain_state(alpha=25.0, beta=7.0, theta=10.0)
+        # 2. Calm (Ratio < 0.75)
+        code, name, bar, ear = classify_brain_state(alpha=20.0, beta=6.0, theta=8.0)
         self.assertEqual(code, STATE_CALM)
         self.assertEqual(name, "Calm")
+        self.assertAlmostEqual(bar, 0.30)
 
-        # 3. Focused (high cognitive engagement without stress)
-        code, name, bar, ear = classify_brain_state(alpha=10.0, beta=14.0, theta=8.0)
+        # 3. Focused (1.15 <= Ratio < 1.65)
+        code, name, bar, ear = classify_brain_state(alpha=10.0, beta=13.5, theta=6.0)
         self.assertEqual(code, STATE_FOCUSED)
         self.assertEqual(name, "Focused")
+        self.assertAlmostEqual(bar, 1.35)
 
-        # 4. Mild Stress (1.5 <= BAR < 2.0)
-        code, name, bar, ear = classify_brain_state(alpha=10.0, beta=16.0, theta=10.0)
+        # 4. Mild Stress (1.65 <= Ratio < 2.40)
+        code, name, bar, ear = classify_brain_state(alpha=10.0, beta=19.0, theta=10.0)
         self.assertEqual(code, STATE_MILD_STRESS)
         self.assertEqual(name, "Mild Stress")
+        self.assertAlmostEqual(bar, 1.90)
 
-        # 5. Moderate Stress (2.0 <= BAR < 2.8)
-        code, name, bar, ear = classify_brain_state(alpha=10.0, beta=22.0, theta=10.0)
+        # 5. Moderate Stress (2.40 <= Ratio < 3.00)
+        code, name, bar, ear = classify_brain_state(alpha=10.0, beta=26.0, theta=10.0)
         self.assertEqual(code, STATE_MODERATE_STRESS)
         self.assertEqual(name, "Moderate Stress")
+        self.assertAlmostEqual(bar, 2.60)
 
-        # 6. Severe Stress (BAR >= 2.8)
-        code, name, bar, ear = classify_brain_state(alpha=8.0, beta=26.0, theta=8.0)
+        # 6. Severe Stress (Ratio >= 3.00)
+        code, name, bar, ear = classify_brain_state(alpha=10.0, beta=35.0, theta=8.0)
         self.assertEqual(code, STATE_SEVERE_STRESS)
         self.assertEqual(name, "Severe Stress")
+        self.assertAlmostEqual(bar, 3.50)
 
     def test_analyze_eeg_buffer_output_structure(self):
         # 128 samples across 4 channels
