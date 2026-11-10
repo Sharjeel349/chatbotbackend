@@ -13,6 +13,7 @@ class TeacherProfile(BaseModel):
     department: str
     designation: str
     advised_sections: List[str] = []
+    advisory_sections: List[str] = []
     total_advisees_count: Optional[int] = 0
 
 
@@ -27,6 +28,9 @@ class AdviseeItem(BaseModel):
     failed_courses_count: int = 0
     completed_credits: int = 0
     latest_emotion: Optional[str] = "Neutral"
+    is_at_risk: Optional[bool] = False
+    risk_reason: Optional[str] = None
+    warning_count: Optional[int] = 0
 
 
 class AtRiskStudentItem(BaseModel):

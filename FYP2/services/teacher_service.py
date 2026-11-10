@@ -63,7 +63,9 @@ def get_teacher_profile(teacher_id: int, db_conn) -> Optional[Dict[str, Any]]:
             (teacher_id,),
         )
         sections = cur.fetchall()
-        teacher["advised_sections"] = [f"{s['section_code']} ({s['semester']})" for s in sections]
+        section_list = [f"{s['section_code']} ({s['semester']})" for s in sections]
+        teacher["advised_sections"] = section_list
+        teacher["advisory_sections"] = section_list
 
         # Fetch total advisees count
         cur.execute(
@@ -135,16 +137,27 @@ def get_teacher_advisees(teacher_id: int, db_conn) -> List[Dict[str, Any]]:
             sem_num = _get_semester_number(r.get("semester", "1"))
             min_cgpa = SEMESTER_MIN_CGPA.get(sem_num, 1.50)
             cgpa = float(r["cgpa"]) if r.get("cgpa") is not None else 0.0
+            failed_cnt = r.get("failed_courses_count", 0) or 0
 
             if cgpa < min_cgpa:
                 status = "Probation Risk"
-            elif r["failed_courses_count"] >= 2:
+                is_at_risk = True
+                risk_reason = f"CGPA ({cgpa:.2f}) is below the required {min_cgpa:.2f} for Semester {sem_num}"
+            elif failed_cnt >= 2:
                 status = "Academic Warning"
+                is_at_risk = True
+                risk_reason = f"Failed {failed_cnt} course(s)"
             else:
                 status = "Good Standing"
+                is_at_risk = False
+                risk_reason = None
 
             r["academic_status"] = status
+            r["is_at_risk"] = is_at_risk
+            r["risk_reason"] = risk_reason
+            r["warning_count"] = failed_cnt
             r["cgpa"] = cgpa
+            r["latest_emotion"] = r.get("latest_emotion") or "Neutral"
             results.append(r)
 
         return results
@@ -224,6 +237,36 @@ def get_at_risk_students(teacher_id: int, db_conn) -> List[Dict[str, Any]]:
 # 4. EEG & COGNITIVE STATE WELLBEING
 # ==========================================
 
+def _normalize_cognitive_state(state_raw: Optional[str]) -> str:
+    s = str(state_raw or "").strip().upper()
+    if not s:
+        return "Neutral"
+    if "CALM" in s:
+        return "Calm"
+    if "FOCUS" in s or "ATTENT" in s:
+        return "Focused"
+    if "MILD" in s and "STRESS" in s:
+        return "Mild Stress"
+    if "MODERATE" in s and "STRESS" in s:
+        return "Moderate Stress"
+    if "SEVERE" in s and "STRESS" in s:
+        return "Severe Stress"
+    if "STRESS" in s:
+        return "Stressed"
+    return "Neutral"
+
+
+_STATE_INTENSITY_MAP = {
+    "Calm": 60,
+    "Focused": 85,
+    "Neutral": 50,
+    "Mild Stress": 70,
+    "Moderate Stress": 80,
+    "Severe Stress": 95,
+    "Stressed": 85,
+}
+
+
 def get_eeg_cognitive_analytics(teacher_id: int, db_conn) -> Dict[str, Any]:
     cur = db_conn.cursor()
     try:
@@ -232,6 +275,7 @@ def get_eeg_cognitive_analytics(teacher_id: int, db_conn) -> Dict[str, Any]:
             """
             SELECT mind_state AS state, COUNT(*) as count
             FROM EEG_State
+            WHERE mind_state IS NOT NULL
             GROUP BY mind_state;
             """
         )
@@ -262,6 +306,7 @@ def get_eeg_cognitive_analytics(teacher_id: int, db_conn) -> Dict[str, Any]:
         mild_stress_cnt = raw_map.get("MILD STRESS", 0)
         mod_stress_cnt = raw_map.get("MODERATE STRESS", 0)
         severe_stress_cnt = raw_map.get("SEVERE STRESS", 0) + raw_map.get("STRESSED", 0)
+        stressed_cnt = mild_stress_cnt + mod_stress_cnt + severe_stress_cnt
 
         total_normalized = (
             calm_cnt + focused_cnt + neutral_cnt + mild_stress_cnt + mod_stress_cnt + severe_stress_cnt
@@ -273,40 +318,54 @@ def get_eeg_cognitive_analytics(teacher_id: int, db_conn) -> Dict[str, Any]:
             "Mild Stress": round((mild_stress_cnt / total_normalized) * 100, 1),
             "Moderate Stress": round((mod_stress_cnt / total_normalized) * 100, 1),
             "Severe Stress": round((severe_stress_cnt / total_normalized) * 100, 1),
-            "Stressed": round(((mild_stress_cnt + mod_stress_cnt + severe_stress_cnt) / total_normalized) * 100, 1),
+            "Stressed": round((stressed_cnt / total_normalized) * 100, 1),
         }
+        dominant_candidates = {k: v for k, v in percentages.items() if k != "Stressed"}
         dominant_state = max(
-            {k: v for k, v in percentages.items() if k != "Stressed"},
-            key=lambda k: percentages[k],
-        )
+            dominant_candidates,
+            key=lambda k: dominant_candidates[k],
+        ) if dominant_candidates else "Neutral"
 
-        # 3. Fetch real recent student telemetry records from DB
+        # 3. Fetch real recent student telemetry records from DB (EEG sessions and chat emotions)
         cur.execute(
             """
-            SELECT 
-                u.name AS student_name,
-                s.sid AS student_sid,
-                COALESCE(cs.title, 'Academic Advising') AS course,
-                cm.timestamp,
-                COALESCE(cm.emotion, 'Neutral') AS state
-            FROM chat_message cm
-            JOIN chat_session cs ON cm.session_id = cs.session_id
-            JOIN student s ON cs.student_id = s.sid
-            JOIN users u ON s.user_id = u.user_id
-            ORDER BY cm.timestamp DESC
-            LIMIT 10;
+            SELECT student_name, student_sid, course, timestamp, state
+            FROM (
+                SELECT 
+                    u.name AS student_name,
+                    s.sid AS student_sid,
+                    COALESCE(cs.title, 'EEG Telemetry') AS course,
+                    es.timestamp,
+                    COALESCE(es.mind_state, 'Neutral') AS state
+                FROM eeg_state es
+                JOIN chat_session cs ON es.session_id = cs.session_id
+                JOIN student s ON cs.student_id = s.sid
+                JOIN users u ON s.user_id = u.user_id
+                UNION ALL
+                SELECT 
+                    u.name AS student_name,
+                    s.sid AS student_sid,
+                    COALESCE(cs.title, 'Academic Advising') AS course,
+                    cm.timestamp,
+                    COALESCE(cm.emotion, 'Neutral') AS state
+                FROM chat_message cm
+                JOIN chat_session cs ON cm.session_id = cs.session_id
+                JOIN student s ON cs.student_id = s.sid
+                JOIN users u ON s.user_id = u.user_id
+                WHERE cm.emotion IS NOT NULL AND cm.emotion <> ''
+            ) combined
+            ORDER BY timestamp DESC
+            LIMIT 15;
             """
         )
         msg_rows = cur.fetchall()
 
         recent_records = []
         for r in msg_rows:
-            st_clean = r["state"].capitalize()
-            if st_clean.upper() == "CALM":
-                st_clean = "Focused"
-            intensity = 85 if st_clean == "Focused" else (75 if st_clean == "Stressed" else 65)
+            st_clean = _normalize_cognitive_state(r.get("state"))
+            intensity = _STATE_INTENSITY_MAP.get(st_clean, 65)
             
-            diff = datetime.now() - r["timestamp"] if r["timestamp"] else None
+            diff = datetime.now() - r["timestamp"] if r.get("timestamp") else None
             if diff:
                 if diff.days == 0:
                     mins = int(diff.seconds / 60)
@@ -329,9 +388,11 @@ def get_eeg_cognitive_analytics(teacher_id: int, db_conn) -> Dict[str, Any]:
 
         insights = []
         if stressed_cnt > 0:
-            insights.append(f"{stressed_cnt} recent sessions flagged with elevated stress/anxiety markers in academic chat telemetry.")
+            insights.append(f"{stressed_cnt} recent sessions flagged with elevated stress/anxiety markers in academic chat & EEG telemetry.")
         if focused_cnt > 0:
-            insights.append(f"{focused_cnt} learning sessions recorded in high focus and calm state.")
+            insights.append(f"{focused_cnt} learning sessions recorded in high focus state.")
+        if calm_cnt > 0:
+            insights.append(f"{calm_cnt} learning sessions recorded in relaxed, receptive calm state.")
         if not insights:
             insights.append("Student cognitive engagement is currently stable and balanced across cohorts.")
 
@@ -342,7 +403,8 @@ def get_eeg_cognitive_analytics(teacher_id: int, db_conn) -> Dict[str, Any]:
             "recent_eeg_records": recent_records,
             "insights": insights,
         }
-    except Exception:
+    except Exception as exc:
+        logger.exception("Error calculating EEG cognitive analytics: %s", exc)
         _safe_rollback(db_conn)
         return {
             "total_evaluations": 0,
