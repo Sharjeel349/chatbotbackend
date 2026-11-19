@@ -22,6 +22,7 @@ from FYP2.services.roman_urdu_service import (
     contains_urdu_script,
     transliterate_urdu_to_roman,
 )
+from FYP2.services.tts_voice_service import strip_markdown_for_tts
 from FYP2.services.advisor_graph import AdvisorState, advisor_graph
 
 
@@ -867,8 +868,10 @@ def _mentions(text: str, terms: set[str]) -> bool:
 def build_student_context(
     query: str, session_id: int, student_id: str, db_conn
 ) -> dict[str, Any]:
+    failed_courses = get_failed_courses(student_id, db_conn) if (student_id and db_conn) else []
     context: dict[str, Any] = {
         "profile": get_student_profile(student_id, db_conn),
+        "failed_courses": failed_courses,
         "recent_chat": get_recent_chat_history(session_id, db_conn),
     }
 
@@ -910,6 +913,7 @@ def build_student_context(
         {
             "credit", "credits", "credit hour", "credit hours", "completed", "passed",
             "progress", "degree", "fyp", "graduation", "pass kitne", "kitne pass",
+            "academic history", "history", "record", "records",
             "کرڈٹ", "پاس", "ڈگری"
         },
     ):
@@ -971,15 +975,19 @@ def build_student_context(
         failed_courses = get_failed_courses(student_id, db_conn)
         context["failed_courses"] = failed_courses
 
-    # 7. Transcript & Grades
+    # 7. Transcript & Grades / Academic History
     if _mentions(
         query,
         {
-            "grade", "transcript", "result", "marks", "performance", "performing",
-            "گریڈ", "نتیجہ", "مارکس"
+            "grade", "grades", "transcript", "result", "marks", "performance", "performing",
+            "academic history", "history", "record", "records", "courses passed",
+            "passed courses", "all courses", "kya parha", "kitne pass",
+            "گریڈ", "نتیجہ", "مارکس", "ریکارڈ"
         },
     ):
         context["transcript"] = get_transcript(student_id, db_conn)
+        if "completed_credits_summary" not in context:
+            context["completed_credits_summary"] = get_completed_credit_hours(student_id, db_conn)
 
     # 8. Next Semester Courses & Roadmap (Based on Student SOS and Prerequisites)
     if _mentions(
@@ -1045,6 +1053,8 @@ ACADEMIC_TERMS = {
     "attendance", "freeze", "drop", "enroll", "enrollment", "admission",
     "degree", "transcript", "credit", "credits", "lecture", "class", "classes",
     "paper", "fail", "pass", "promote", "promotion", "repeat", "cease",
+    "arid", "registration", "history", "record", "records", "sos", "profile",
+    "id", "student", "identity",
     "kors", "kursa", "hazri", "imtihan", "parhai", "dakhla", "qist", "challan",
 }
 
@@ -1077,6 +1087,64 @@ def build_prompt(
     context: dict[str, Any],
     knowledge: str,
 ) -> str:
+    profile = context.get("profile") or {}
+    student_name = profile.get("name") or profile.get("full_name") or "Student"
+    arid_no = profile.get("registration_no") or profile.get("sid") or "Unknown"
+    semester = str(profile.get("semester") or "Unknown")
+    section = str(profile.get("section_code") or "Unknown")
+    cgpa = str(profile.get("cgpa") or "N/A")
+    advisor_name = profile.get("advisor_name") or "N/A"
+    first_name = student_name.split()[0] if student_name else "Student"
+
+    credits_info = context.get("completed_credits_summary") or {}
+    completed_credits = credits_info.get("completed_credits")
+    degree_progress = credits_info.get("degree_progress")
+    credits_line = ""
+    if completed_credits is not None:
+        credits_line = f"- Completed Credits: {completed_credits} (Degree Progress: {degree_progress or 'N/A'})\n"
+
+    failed_courses = context.get("failed_courses") or []
+    has_zero_fails = len(failed_courses) == 0
+    if has_zero_fails:
+        failed_line = "- Failed Courses / Backlogs: 0 (No failed courses - clean academic record)\n"
+    else:
+        failed_titles = [f"{c.get('course_id', '')} {c.get('title', '')}".strip() for c in failed_courses]
+        failed_line = f"- Failed Courses to Clear: {', '.join(failed_titles)}\n"
+
+    # Detect emotional stress from EEG state or student message
+    emotion_lower = (emotion or "").lower()
+    user_lower = (user_text or "").lower()
+    is_stressed = any(
+        s in emotion_lower for s in ["stress", "anxious", "frustrat", "sad", "fear", "panic", "overwhelm"]
+    ) or any(
+        s in user_lower for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared", "dar lag raha", "ghabra", "overwhelmed", "failing", "depress"]
+    )
+
+    if is_stressed:
+        if language == "roman_urdu":
+            emotion_guidance = (
+                "EMOTIONAL STATE: STUDENT IS CURRENTLY STRESSED / PARESHAN.\n"
+                "- Student parhai ya academic situation ko le kar stressed aur pareshan hain.\n"
+                "- CRITICAL SUPPORT DIRECTIVE: Pehle un ko warm aur comforting alfaz mein hosla dein aur tassalli dein.\n"
+                f"- Acknowledge their stress kindly (maslan: 'Pareshan mat hon {first_name}, parhai ka pressure kabhi kabhi zyada ho jata hai, lekin hum mil kar is ka hal nikalenge.').\n"
+                f"- Un ki achi CGPA ({cgpa}), 0 fail courses, aur degree progress ({degree_progress or '50%'}) bata kar un ka confidence bahal karein.\n"
+                "- Guidance calm aur step-by-step dein taake un ka zehni dabao kam ho."
+            )
+        else:
+            emotion_guidance = (
+                "EMOTIONAL STATE: STUDENT IS CURRENTLY STRESSED / ANXIOUS.\n"
+                "- The student is feeling stressed, overwhelmed, or anxious about their academic situation.\n"
+                "- CRITICAL SUPPORT DIRECTIVE: Begin by warmly comforting and reassuring the student with genuine empathy.\n"
+                f"- Acknowledge their stress kindly (e.g., 'Take a deep breath, {first_name} — university studies can feel overwhelming at times, but you are not alone and we will sort this out together.').\n"
+                f"- Highlight their strengths and achievements: remind them of their strong CGPA ({cgpa}), 0 failed courses, and solid degree progress ({degree_progress or '50%'}).\n"
+                "- Present your advice in a calm, clear, step-by-step manner so they feel relieved, supported, and in control."
+            )
+    else:
+        emotion_guidance = (
+            "EMOTIONAL TONE:\n"
+            "- Maintain a warm, encouraging, friendly, and supportive advising tone."
+        )
+
     if language == "roman_urdu":
         language_rule = (
             "CRITICAL LANGUAGE RULE: You MUST reply in conversational Pakistani Roman Urdu using Latin/English alphabet ONLY. "
@@ -1085,37 +1153,101 @@ def build_prompt(
             "Never use Urdu or Arabic script. Keep technical university terms like CGPA, GPA, semester, course, fees, exam, and advisor in English."
         )
         reply_cue = "ADVISOR_REPLY (in Roman Urdu):"
+        if has_zero_fails:
+            standing_directives = (
+                f"- Student ka koi bhi course fail nahi hai (0 failed courses, bilkul clean record).\n"
+                f"- STRICT RULE: Kabhi bhi student ko repeat karne, course dobara lene ya prerequisite clear karne ka mat bolein.\n"
+            )
+        else:
+            failed_titles_str = ", ".join(c.get("title", "") for c in failed_courses)
+            standing_directives = (
+                f"- Student ke failed courses yeh hain: {failed_titles_str}.\n"
+                f"- Degree complete karne ke liye pehle in failed courses ko repeat karke pass karna zaroori hai.\n"
+            )
+        identity_block = (
+            f"LOGGED-IN STUDENT INFORMATION:\n"
+            f"- Full Name: {student_name}\n"
+            f"- ARID / Registration Number: {arid_no}\n"
+            f"- Current Semester: {semester} (Section: {section})\n"
+            f"- Current CGPA: {cgpa}\n"
+            f"{credits_line}"
+            f"{failed_line}"
+            f"- Academic Advisor: {advisor_name}\n\n"
+            f"AUTHENTICATION & DIRECTIVES:\n"
+            f"- {student_name} ({arid_no}) portal par logged in hain. Aap un ka record jaante hain.\n"
+            f"- Student se un ka ARID number ya registration number mat poochein.\n"
+            f"- Jab student academic history ya parhai ke baray mein pooche, to un ka semester ({semester}), CGPA ({cgpa}), aur completed credits direct batayein.\n"
+            f"- Agar student ARID number pooche to confirm karein ke un ka ARID number {arid_no} hai.\n"
+            f"{standing_directives}"
+        )
     else:
         language_rule = "Reply only in clear, natural English."
         reply_cue = "ADVISOR_REPLY:"
+        if has_zero_fails:
+            standing_directives = (
+                "- The student has ZERO failed courses (0 backlogs - completely clean academic record).\n"
+                "- STRICT RULE: NEVER advise the student to repeat any courses or retake prerequisites.\n"
+            )
+        else:
+            failed_titles_str = ", ".join(c.get("title", "") for c in failed_courses)
+            standing_directives = (
+                f"- The student has failed courses that must be repeated: {failed_titles_str}.\n"
+                f"- Advise them to prioritize clearing these failed courses to graduate successfully.\n"
+            )
+        identity_block = (
+            f"LOGGED-IN STUDENT INFORMATION:\n"
+            f"- Full Name: {student_name}\n"
+            f"- ARID / Registration Number: {arid_no}\n"
+            f"- Current Semester: {semester} (Section: {section})\n"
+            f"- Current CGPA: {cgpa}\n"
+            f"{credits_line}"
+            f"{failed_line}"
+            f"- Academic Advisor: {advisor_name}\n\n"
+            f"AUTHENTICATION & DIRECTIVES:\n"
+            f"- {student_name} ({arid_no}) is logged in to the portal. You have full access to their profile and academic records.\n"
+            f"- Never ask the student for their ARID number, registration number, or name.\n"
+            f"- When the student asks about their academic history, summarize their current semester ({semester}), CGPA ({cgpa}), completed credits, and degree progress directly from their records.\n"
+            f"- If asked about their ARID number, confirm that their ARID number is {arid_no}.\n"
+            f"{standing_directives}"
+        )
+
+    if has_zero_fails:
+        repeats_clause = (
+            "- FAILED COURSES & REPEATS: Student has ZERO failed courses. All completed courses are passed. "
+            "STRICTLY DO NOT advise repeating courses or retaking prerequisites. Degree completion is fully on track."
+        )
+    else:
+        repeats_clause = (
+            "- Always check if the student has 'unresolved_failed_courses_to_repeat'; advise them to prioritize repeating failed prerequisite courses first.\n"
+            "- If they ask about taking a course listed in 'locked_courses_needing_prerequisites', clearly explain what prerequisite course they must pass first."
+        )
 
     return f"""
-You are a helpful university academic advisor.
+You are a compassionate and helpful university academic advisor.
+
+{identity_block}
+
+{emotion_guidance}
 
 LANGUAGE:
 {language_rule}
 
-ROLE & DOMAIN RESTRICTIONS (STRICT):
+ROLE & DOMAIN:
 - You are STRICTLY a University Academic Advisor.
-- You ONLY answer questions regarding university studies: degree rules, semester policies, courses, CGPA/GPA, exams, attendance, credit hours, and fees.
-- If the student asks about anything outside university academics (such as weather, sports, general knowledge, movies, news, food/recipes, casual chitchat, or non-academic coding tasks):
-  Do NOT answer the off-topic question. Politely refuse and state that you can only assist with university and academic matters.
-  Example English refusal: "I am your university academic advisor and can only assist with academic matters, courses, CGPA, and university policies. Please ask a university-related question."
-  Example Roman Urdu refusal: "Main aap ka university academic advisor hoon aur sirf academic mamlaat, courses, CGPA, aur university policies mein madad kar sakta hoon. Please apni parhai se mutaliq sawal poochein."
+- You assist the student with their degree, courses, CGPA, academic history, exams, attendance, credit hours, and university policies.
+- Always answer the student's question directly and concisely using the provided context and records.
 
-STYLE:
-- Use no more than 5-10 short conversational sentences.
-- Answer the student's exact question directly and first.
-- Do NOT give unsolicited warnings or lectures about workload or grades unless the student specifically asks for evaluation.
+ANSWER DETAIL & STYLE (MEDIUM DETAIL):
+- Provide a clear, medium-detail response (around 3 to 6 well-structured, informative sentences).
+- Do NOT give a rushed 1-sentence answer, and do NOT write an overwhelming essay.
+- Answer the student's question directly, followed by helpful context, breakdown of figures (such as CGPA, semester, credits, degree progress, or course details), and an encouraging next step.
 - Never invent a student fact or university rule.
 
 ACADEMIC ADVISING GUIDELINES:
 - When advising what subjects to take or study next, check 'next_semester_course_recommendations' in STUDENT_CONTEXT_JSON.
-- Always check if the student has 'unresolved_failed_courses_to_repeat'; advise them to prioritize repeating failed prerequisite courses first.
+{repeats_clause}
 - Recommend courses listed in 'eligible_courses_to_study_next' (their prerequisites are already passed).
-- If they ask about taking a course listed in 'locked_courses_needing_prerequisites', clearly explain what prerequisite course they must pass first.
 - Mention their Scheme of Study (SOS) and degree completion progress when relevant.
-- If 'attempt_warnings' shows 2 or more attempts on a course, counsel them gently regarding repeat course policies.
 
 STUDENT_CONTEXT_JSON:
 {json.dumps(context, ensure_ascii=False, default=str, separators=(",", ":"))}
@@ -1140,11 +1272,13 @@ def stream_llm_reply(prompt: str, model: str) -> Iterator[str]:
         "stream": True,
         "keep_alive": "30m",
         "options": {
-            "temperature": 0.2,
+            "temperature": 0.25,
             "top_p": 0.9,
-            "num_predict": 120,
-            "num_ctx": 1536,
+            "repeat_penalty": 1.2,
+            "num_predict": 180,
+            "num_ctx": 2048,
             "num_thread": min(4, os.cpu_count() or 2),
+            "stop": ["\n\n\n", "STUDENT_MESSAGE:", "ADVISOR_REPLY", "STUDENT_CONTEXT_JSON:"],
         },
     }
     with requests.post(
@@ -1163,6 +1297,25 @@ def stream_llm_reply(prompt: str, model: str) -> Iterator[str]:
                 yield token
             if chunk.get("done"):
                 break
+
+
+def clean_model_reply(reply: str, language: str) -> str:
+    if not reply:
+        return reply
+    if language == "roman_urdu":
+        # Remove any English translation in parentheses throughout the reply
+        reply = re.sub(r"\s*\([A-Za-z0-9\s,.'’?!]+\)", "", reply).strip()
+    # Strip prompt leakage or simulated question restarts
+    for stop_pat in [r"\n\n[Kk]ya meri degree", r"\n\n[Ss]tudent_context", r"\n\nUser:", r"\n\nADVISOR_REPLY"]:
+        parts = re.split(stop_pat, reply, flags=re.IGNORECASE)
+        if len(parts) > 1:
+            reply = parts[0].strip()
+    # Deduplicate consecutive repeating phrases (12+ chars)
+    reply = re.sub(r"(\b.{12,}?\b)(?:\s+\1){1,}", r"\1", reply, flags=re.IGNORECASE)
+    # If model still contains Urdu script despite instructions, transliterate it rather than failing
+    if language == "roman_urdu" and contains_urdu_script(reply):
+        reply = transliterate_urdu_to_roman(reply)
+    return reply.strip()
 
 
 def select_tts_voice(
@@ -1257,8 +1410,9 @@ def synthesize_speech(
             detected_language,
         )
 
-        # Synthesize sample or speech using robust tts_voice_service
-        wav_path, _, _ = tts_voice_service.synthesize_sample(chosen_voice, text)
+        # Synthesize sample or speech using robust tts_voice_service with stripped markdown
+        tts_text = strip_markdown_for_tts(text)
+        wav_path, _, _ = tts_voice_service.synthesize_sample(chosen_voice, tts_text)
         if wav_path.exists():
             import shutil
             shutil.copyfile(wav_path, output_path)
@@ -1377,6 +1531,18 @@ def stream_voice_chat(
                 if "handle_greeting" in event:
                     reply = event["handle_greeting"].get("response")
                     break
+                elif "handle_identity" in event:
+                    reply = event["handle_identity"].get("response")
+                    break
+                elif "handle_degree_completion" in event:
+                    reply = event["handle_degree_completion"].get("response")
+                    break
+                elif "handle_cgpa" in event:
+                    reply = event["handle_cgpa"].get("response")
+                    break
+                elif "handle_cgpa_policy" in event:
+                    reply = event["handle_cgpa_policy"].get("response")
+                    break
                 elif "handle_irrelevant" in event:
                     reply = event["handle_irrelevant"].get("response")
                     break
@@ -1401,10 +1567,7 @@ def stream_voice_chat(
                             script_violation = True
                         elif not script_violation:
                             yield _event("token", text=token)
-                    reply = "".join(chunks).strip()
-                    if language == "roman_urdu":
-                        # Remove any English translation in parentheses throughout the reply
-                        reply = re.sub(r"\s*\([A-Za-z0-9\s,.'’?!]+\)", "", reply).strip()
+                    reply = clean_model_reply("".join(chunks).strip(), language)
                 except Exception:
                     logger.exception("Ollama generation failed")
                     reply = (
@@ -1572,6 +1735,18 @@ def process_text_chat(
         if "handle_greeting" in event:
             reply = event["handle_greeting"].get("response")
             break
+        elif "handle_identity" in event:
+            reply = event["handle_identity"].get("response")
+            break
+        elif "handle_degree_completion" in event:
+            reply = event["handle_degree_completion"].get("response")
+            break
+        elif "handle_cgpa" in event:
+            reply = event["handle_cgpa"].get("response")
+            break
+        elif "handle_cgpa_policy" in event:
+            reply = event["handle_cgpa_policy"].get("response")
+            break
         elif "handle_irrelevant" in event:
             reply = event["handle_irrelevant"].get("response")
             break
@@ -1588,9 +1763,7 @@ def process_text_chat(
         try:
             for token in stream_llm_reply(prompt, model):
                 chunks.append(token)
-            reply = "".join(chunks).strip()
-            if language == "roman_urdu":
-                reply = re.sub(r"\s*\([A-Za-z0-9\s,.'’?!]+\)", "", reply).strip()
+            reply = clean_model_reply("".join(chunks).strip(), language)
         except Exception:
             logger.exception("Ollama generation failed for text chat")
             reply = (

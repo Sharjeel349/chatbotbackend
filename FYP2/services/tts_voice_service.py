@@ -201,13 +201,42 @@ def get_available_voices_response() -> Dict[str, Any]:
     }
 
 
+def strip_markdown_for_tts(text: str) -> str:
+    """
+    Strips markdown formatting, symbols, and list bullets from text so
+    that Text-To-Speech engines speak smoothly without pronouncing asterisks, hashes, etc.
+    """
+    if not text:
+        return ""
+    # Links [label](url) -> label
+    s = re.sub(r"\[([^\]]+)\]\([^\)]+\)", r"\1", text)
+    # Remove markdown header markers at line start (#, ##, etc.)
+    s = re.sub(r"^\s*#+\s*", "", s, flags=re.MULTILINE)
+    # Remove bold/italic/strikethrough/code markers (*, _, ~, `)
+    s = re.sub(r"[*_~`]+", "", s)
+    # Remove bullet markers (- , * , + , • ) at line start
+    s = re.sub(r"^\s*[-*+•]\s+", "", s, flags=re.MULTILINE)
+    # For line breaks: if line ends without terminal punctuation, append a period
+    lines = [line.strip() for line in s.splitlines() if line.strip()]
+    cleaned_lines = []
+    for line in lines:
+        if line and line[-1] not in (".", "!", "?", ":", ","):
+            cleaned_lines.append(line + ".")
+        else:
+            cleaned_lines.append(line)
+    s = " ".join(cleaned_lines)
+    s = re.sub(r"[ \t]+", " ", s).strip()
+    return s
+
+
 def synthesize_sample(voice: str, text: Optional[str] = None) -> Tuple[Path, str, int]:
     """
     Synthesize audio for a given voice and sample text.
     Returns (file_path, audio_url, duration_ms).
     Uses caching so repeated requests return instantaneously.
     """
-    sample_text = (text or "").strip() or DEFAULT_SAMPLE_TEXT
+    raw_text = (text or "").strip() or DEFAULT_SAMPLE_TEXT
+    sample_text = strip_markdown_for_tts(raw_text)
     safe_voice = re.sub(r"[^a-zA-Z0-9_\-]", "_", voice)
     text_hash = hashlib.md5(sample_text.encode("utf-8")).hexdigest()[:10]
     out_filename = f"sample_{safe_voice}_{text_hash}.wav"
