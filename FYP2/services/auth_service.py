@@ -61,9 +61,9 @@ def authenticate_user(email, password, db_conn):
             FROM Users u
             LEFT JOIN Student s ON u.user_id = s.user_id
             LEFT JOIN Teacher t ON u.user_id = t.user_id
-            WHERE u.email = %s;
+            WHERE LOWER(u.email) = LOWER(%s);
             """,
-            (email,),
+            (email.strip(),),
         )
         row = cur.fetchone()
         if not row or not verify_password(password, row["password"]):
