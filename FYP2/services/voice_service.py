@@ -1492,7 +1492,7 @@ def stream_llm_reply(prompt: str, model: str) -> Iterator[str]:
         OLLAMA_URL,
         json=payload,
         stream=True,
-        timeout=(5, 150),
+        timeout=(10, 300),
     ) as response:
         response.raise_for_status()
         for line in response.iter_lines():
