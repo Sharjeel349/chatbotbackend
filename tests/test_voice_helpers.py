@@ -1,4 +1,8 @@
+import os
+import sys
 import unittest
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from FYP2.services.advisor_graph import AdvisorState, advisor_graph
 from FYP2.services.voice_service import (
@@ -409,6 +413,126 @@ class VoiceHelperTests(unittest.TestCase):
         cleaned = strip_markdown_for_tts(md)
         self.assertNotIn("**", cleaned)
         self.assertEqual(cleaned, "Aap ka koi course fail nahi hai aur aap ka CGPA 2.98 bohat acha hai!")
+
+    def test_teacher_strictness_intent_roman_urdu(self):
+        state: AdvisorState = {
+            "query": "Kon sa teacher strict ha ?",
+            "language": "roman_urdu",
+            "student_id": "2023-ARID-0274",
+            "profile": {
+                "name": "SHARJEEL AHMED",
+                "registration_no": "2023-ARID-0274",
+                "cgpa": 3.86,
+                "semester": "8",
+            },
+        }
+        res = advisor_graph.invoke(state)
+        self.assertEqual(res.get("intent"), "teacher_strictness")
+        reply = res.get("response", "")
+        self.assertIn("grading", reply.lower())
+        self.assertIn("teacher", reply.lower())
+        # Ensure it does not dump raw markdown table syntax
+        self.assertNotIn("| Teacher Name |", reply)
+        self.assertNotIn("|-------------|", reply)
+
+    def test_failed_courses_intent_roman_urdu(self):
+        state: AdvisorState = {
+            "query": "Kya mera koi course fail hai?",
+            "language": "roman_urdu",
+            "student_id": "2023-ARID-0274",
+            "profile": {
+                "name": "SHARJEEL AHMED",
+                "registration_no": "2023-ARID-0274",
+                "cgpa": 3.86,
+                "semester": "8",
+            },
+        }
+        res = advisor_graph.invoke(state)
+        self.assertEqual(res.get("intent"), "failed_courses")
+        reply = res.get("response", "")
+        self.assertIn("fail", reply.lower())
+        self.assertIn("clean", reply.lower())
+        self.assertIn("3.86", reply)
+
+    def test_failed_courses_urdu_script_intent(self):
+        state: AdvisorState = {
+            "query": "کیا میرا کوئی کورس فیل ہے",
+            "language": "roman_urdu",
+            "student_id": "2023-ARID-0274",
+            "profile": {
+                "name": "SHARJEEL AHMED",
+                "registration_no": "2023-ARID-0274",
+                "cgpa": 3.86,
+                "semester": "8",
+            },
+        }
+        res = advisor_graph.invoke(state)
+        self.assertEqual(res.get("intent"), "failed_courses")
+        reply = res.get("response", "")
+        self.assertIn("fail", reply.lower())
+
+    def test_student_details_intent_roman_urdu(self):
+        state: AdvisorState = {
+            "query": "Mery sari details btao",
+            "language": "roman_urdu",
+            "student_id": "2023-ARID-0274",
+            "profile": {
+                "name": "SHARJEEL AHMED",
+                "registration_no": "2023-ARID-0274",
+                "cgpa": 3.86,
+                "semester": "8",
+                "section_code": "A",
+            },
+        }
+        res = advisor_graph.invoke(state)
+        self.assertEqual(res.get("intent"), "student_details")
+        reply = res.get("response", "")
+        self.assertIn("SHARJEEL AHMED", reply)
+        self.assertIn("3.86", reply)
+        self.assertIn("Credit Hours", reply)
+        # Ensure no hallucinated placeholder exists
+        self.assertNotIn("[Insert", reply)
+        self.assertNotIn("Insert number", reply)
+
+    def test_urdu_script_cgpa_intent(self):
+        state: AdvisorState = {
+            "query": "میرا CGPA کتنا ہے",
+            "language": "roman_urdu",
+            "student_id": "2023-ARID-0274",
+            "profile": {
+                "name": "SHARJEEL AHMED",
+                "registration_no": "2023-ARID-0274",
+                "cgpa": 3.86,
+                "semester": "8",
+            },
+        }
+        res = advisor_graph.invoke(state)
+        self.assertEqual(res.get("intent"), "cgpa")
+        reply = res.get("response", "")
+        self.assertIn("3.86", reply)
+        self.assertIn("CGPA", reply)
+        # Ensure it's not phonetic gibberish
+        self.assertNotIn("tmas jayein", reply)
+
+    def test_emotion_stressed_generates_supportive_prefix(self):
+        state: AdvisorState = {
+            "query": "Kya mera koi course fail hai?",
+            "language": "roman_urdu",
+            "emotion": "Stressed",
+            "student_id": "2023-ARID-0274",
+            "profile": {
+                "name": "SHARJEEL AHMED",
+                "registration_no": "2023-ARID-0274",
+                "cgpa": 3.86,
+                "semester": "8",
+            },
+        }
+        res = advisor_graph.invoke(state)
+        reply = res.get("response", "")
+        self.assertTrue(
+            "pareshan mat hon" in reply.lower() or "tension" in reply.lower(),
+            f"Expected stressed prefix in reply, got: {reply}",
+        )
 
 
 if __name__ == "__main__":

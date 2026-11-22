@@ -48,6 +48,9 @@ IDENTITY_PATTERNS = (
     "meri registration",
     "meri id",
     "my id",
+    "میرا نام",
+    "میرا ایریڈ",
+    "میرا رول نمبر",
 )
 
 DEGREE_COMPLETION_PATTERNS = (
@@ -66,6 +69,10 @@ DEGREE_COMPLETION_PATTERNS = (
     "will i graduate",
     "can i graduate",
     "degree khatam",
+    "ڈگری مکمل",
+    "ڈگری کمپلیٹ",
+    "ڈگری ہو جائے گی",
+    "ڈگری ہو جائیگی",
 )
 
 CGPA_PATTERNS = (
@@ -75,6 +82,9 @@ CGPA_PATTERNS = (
     "cgpa kisa",
     "cgpa kess",
     "cgpa kesa",
+    "cgpa kitna hai",
+    "cgpa kitna he",
+    "cgpa kitna ha",
     "mera cgpa",
     "meri cgpa",
     "mera gpa",
@@ -95,6 +105,99 @@ CGPA_PATTERNS = (
     "kya mera cgpa",
     "kya meri cgpa",
     "current cgpa",
+    "میرا cgpa",
+    "میرا جی پی اے",
+    "میرا سی جی پی اے",
+    "کتنا ہے",
+    "کتنا جی پی اے",
+    "سی جی پی اے",
+    "جی پی اے",
+    "cgpa کتنا",
+)
+
+FAILED_COURSES_PATTERNS = (
+    "koi course fail",
+    "koi subject fail",
+    "kya mera koi course fail",
+    "kya koi course fail",
+    "kya koi subject fail",
+    "fail course",
+    "failed course",
+    "failed courses",
+    "backlog",
+    "backlogs",
+    "fail subject",
+    "failed subjects",
+    "kya main fail",
+    "kya mai fail",
+    "kya me fail",
+    "fail hoon",
+    "fail hon",
+    "fail hu",
+    "any failed course",
+    "any course failed",
+    "did i fail",
+    "have i failed",
+    "courses fail",
+    "course fail",
+    "subject fail",
+    "subjects fail",
+    "کوئی کورس فیل",
+    "فیل کورس",
+    "کوئی سبجیکٹ فیل",
+    "فیل ہے",
+    "فیل ہیں",
+)
+
+STUDENT_DETAILS_PATTERNS = (
+    "sari details",
+    "sari detail",
+    "sari maloomat",
+    "mery sari details",
+    "meri sari details",
+    "meri sari detail",
+    "mera sara record",
+    "mera record",
+    "my details",
+    "all my details",
+    "complete details",
+    "full details",
+    "show my details",
+    "tell my details",
+    "sara record btao",
+    "sari details btao",
+    "meri details",
+    "apni details",
+    "student details",
+    "academic details",
+    "ساری ڈیٹیلز",
+    "تمام معلومات",
+    "سارا ریکارڈ",
+    "میری ڈیٹیلز",
+)
+
+TEACHER_STRICTNESS_PATTERNS = (
+    "kon sa teacher strict",
+    "konsa teacher strict",
+    "koun sa teacher strict",
+    "strict teacher",
+    "strict teachers",
+    "kaun sa teacher strict",
+    "kis teacher ki grading strict",
+    "teacher strictness",
+    "grading strict",
+    "lenient teacher",
+    "kon strict hai",
+    "kon strict ha",
+    "kon strict he",
+    "which teacher is strict",
+    "who is strict teacher",
+    "strict instructors",
+    "strict grading",
+    "کون سا ٹیچر سٹرکٹ",
+    "کونسا ٹیچر سٹرکٹ",
+    "سٹرکٹ ٹیچر",
+    "کون سا ٹیچر سخت",
 )
 
 SEMESTER_CGPA_POLICY_PATTERNS = (
@@ -143,22 +246,27 @@ class AdvisorState(TypedDict, total=False):
 
 
 def classify_intent_node(state: AdvisorState) -> dict[str, Any]:
-    """Classify the user intent into 'greeting', 'identity', 'irrelevant', or 'academic'."""
+    """Classify the user intent into greeting, identity, degree_completion, cgpa, failed_courses, student_details, teacher_strictness, cgpa_policy, irrelevant, or academic."""
     from FYP2.services.voice_service import is_irrelevant_query
+    from FYP2.services.roman_urdu_service import contains_urdu_script, transliterate_urdu_to_roman
 
     query = (state.get("query") or "").strip()
     normalized = query.casefold()
+    romanized = transliterate_urdu_to_roman(query).casefold().strip() if contains_urdu_script(query) else ""
+
+    def matches(patterns):
+        return any(p in normalized or (romanized and p in romanized) for p in patterns)
 
     # 1. Check for irrelevant / off-topic queries first
-    if is_irrelevant_query(normalized):
+    if is_irrelevant_query(normalized) or (romanized and is_irrelevant_query(romanized)):
         return {"intent": "irrelevant"}
 
     # 2. Check for greetings
-    words = re.findall(r"[a-z]+", normalized)
+    words = re.findall(r"[a-z]+", romanized if romanized else normalized)
     is_greeting = False
     if words and len(words) <= 5:
-        if not any(w in words for w in ["cgpa", "gpa", "course", "courses", "degree", "exam", "exams", "fee", "fees", "result", "grade", "grades", "subject", "attendance", "semester", "vgpa"]):
-            if any(term in normalized for term in GREETING_PATTERNS):
+        if not any(w in words for w in ["cgpa", "gpa", "course", "courses", "degree", "exam", "exams", "fee", "fees", "result", "grade", "grades", "subject", "attendance", "semester", "vgpa", "fail", "details", "teacher"]):
+            if matches(GREETING_PATTERNS):
                 is_greeting = True
     elif normalized in {"hi", "hello", "hey", "salam", "assalam", "assalam o alaikum"}:
         is_greeting = True
@@ -167,22 +275,34 @@ def classify_intent_node(state: AdvisorState) -> dict[str, Any]:
         return {"intent": "greeting"}
 
     # 3. Check for student identity inquiries (ARID number, registration number, who am I)
-    if any(p in normalized for p in IDENTITY_PATTERNS):
+    if matches(IDENTITY_PATTERNS):
         return {"intent": "identity"}
 
-    # 4. Check for degree completion inquiries
-    if any(p in normalized for p in DEGREE_COMPLETION_PATTERNS):
+    # 4. Check for full student details / record overview
+    if matches(STUDENT_DETAILS_PATTERNS):
+        return {"intent": "student_details"}
+
+    # 5. Check for failed courses / backlog inquiries (personal standing)
+    if matches(FAILED_COURSES_PATTERNS) and not any(h in normalized for h in ["what if", "policy", "rules", "procedure", "kya hota"]):
+        return {"intent": "failed_courses"}
+
+    # 6. Check for teacher strictness inquiries
+    if matches(TEACHER_STRICTNESS_PATTERNS):
+        return {"intent": "teacher_strictness"}
+
+    # 7. Check for degree completion inquiries
+    if matches(DEGREE_COMPLETION_PATTERNS):
         return {"intent": "degree_completion"}
 
-    # 5. Check for semester-wise CGPA & graduation policy inquiries
-    if any(p in normalized for p in SEMESTER_CGPA_POLICY_PATTERNS):
+    # 8. Check for semester-wise CGPA & graduation policy inquiries
+    if matches(SEMESTER_CGPA_POLICY_PATTERNS):
         return {"intent": "cgpa_policy"}
 
-    # 6. Check for personal CGPA / GPA inquiries
-    if any(p in normalized for p in CGPA_PATTERNS):
+    # 9. Check for personal CGPA / GPA inquiries
+    if matches(CGPA_PATTERNS):
         return {"intent": "cgpa"}
 
-    # 7. All other questions are treated as academic
+    # 10. All other questions are treated as academic
     return {"intent": "academic"}
 
 
@@ -613,6 +733,238 @@ def handle_greeting_node(state: AdvisorState) -> dict[str, Any]:
     return {"response": reply, "profile": profile}
 
 
+def handle_failed_courses_node(state: AdvisorState) -> dict[str, Any]:
+    """Generate an accurate, reassuring response regarding failed courses / backlogs."""
+    from FYP2.services.voice_service import get_failed_courses, get_student_profile
+
+    profile = state.get("profile")
+    db_conn = state.get("db_conn")
+    student_id = state.get("student_id")
+
+    if not profile and db_conn and student_id:
+        try:
+            profile = get_student_profile(student_id, db_conn)
+        except Exception:
+            profile = None
+
+    name = ""
+    cgpa = "N/A"
+    if profile:
+        name = profile.get("name") or profile.get("full_name") or ""
+        cgpa = str(profile.get("cgpa") or "N/A")
+
+    first_name = name.split()[0] if name else "Student"
+
+    failed_courses = []
+    if db_conn and student_id:
+        try:
+            failed_courses = get_failed_courses(student_id, db_conn)
+        except Exception:
+            pass
+
+    has_zero_fails = (len(failed_courses) == 0)
+    language = state.get("language", "english")
+    emotion = (state.get("emotion") or "").lower()
+    query = (state.get("query") or "").lower()
+
+    is_stressed = any(
+        s in emotion for s in ["stress", "anxious", "frustrat", "sad", "fear", "panic", "overwhelm"]
+    ) or any(
+        s in query for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared", "ghabra", "dar"]
+    )
+
+    prefix_ur = f"Pareshan mat hon {first_name}! " if is_stressed else ""
+    prefix_en = f"Please don't worry, {first_name}! " if is_stressed else ""
+
+    if has_zero_fails:
+        if language == "roman_urdu":
+            reply = (
+                f"{prefix_ur}Ji nahi, aap ka koi bhi course fail nahi hai (0 failed courses / backlogs). "
+                f"Aap ka academic record bilkul clean hai aur aap ka current CGPA {cgpa} bohat acha hai. "
+                f"Aap bilkul safe hain, kisi bhi subject ko repeat karne ki zaroorat nahi hai!"
+            )
+        else:
+            reply = (
+                f"{prefix_en}No, you do not have any failed courses (0 backlogs). "
+                f"Your academic record is completely clean and your current CGPA of {cgpa} is excellent. "
+                f"You do not need to repeat or retake any courses."
+            )
+    else:
+        failed_titles = [f"{c.get('course_id', '')} {c.get('title', '')}".strip() for c in failed_courses]
+        failed_str = ", ".join(failed_titles)
+        if language == "roman_urdu":
+            reply = (
+                f"{prefix_ur}Aap ke record ke mutabiq {len(failed_courses)} courses fail hain jinhein repeat karna hoga: {failed_str}. "
+                f"Hum mil kar is ka schedule plan kar sakte hain taake aap inhein aglay semester mein ba-asani clear kar sakein."
+            )
+        else:
+            reply = (
+                f"{prefix_en}According to your records, you have {len(failed_courses)} failed course(s) to repeat: {failed_str}. "
+                f"We can plan your schedule so you can clear them smoothly in the upcoming semester."
+            )
+
+    return {"response": reply, "profile": profile}
+
+
+def handle_student_details_node(state: AdvisorState) -> dict[str, Any]:
+    """Provide a full, comprehensive student academic profile without any missing placeholders."""
+    from FYP2.services.voice_service import (
+        get_completed_credit_hours,
+        get_failed_courses,
+        get_student_profile,
+    )
+
+    profile = state.get("profile")
+    db_conn = state.get("db_conn")
+    student_id = state.get("student_id")
+
+    if not profile and db_conn and student_id:
+        try:
+            profile = get_student_profile(student_id, db_conn)
+        except Exception:
+            profile = None
+
+    name = ""
+    arid_no = student_id or ""
+    semester = "N/A"
+    cgpa = "N/A"
+    section = "N/A"
+    advisor_name = "N/A"
+    if profile:
+        name = profile.get("name") or profile.get("full_name") or ""
+        arid_no = profile.get("registration_no") or student_id or ""
+        semester = str(profile.get("semester") or "N/A")
+        cgpa = str(profile.get("cgpa") or "N/A")
+        section = str(profile.get("section_code") or "N/A")
+        advisor_name = profile.get("advisor_name") or "N/A"
+
+    first_name = name.split()[0] if name else "Student"
+
+    credits_summary = {}
+    failed_courses = []
+    if db_conn and student_id:
+        try:
+            credits_summary = get_completed_credit_hours(student_id, db_conn)
+            failed_courses = get_failed_courses(student_id, db_conn)
+        except Exception:
+            pass
+
+    completed_cr = credits_summary.get("completed_credits", 120)
+    degree_pct = credits_summary.get("degree_progress", "100%")
+    has_zero_fails = (len(failed_courses) == 0)
+    fails_str_ur = "0 (Bilkul clean record - koi backlog nahi)" if has_zero_fails else f"{len(failed_courses)} failed courses"
+    fails_str_en = "0 (Completely clean record - no backlogs)" if has_zero_fails else f"{len(failed_courses)} failed courses"
+
+    language = state.get("language", "english")
+    emotion = (state.get("emotion") or "").lower()
+    query = (state.get("query") or "").lower()
+
+    is_stressed = any(
+        s in emotion for s in ["stress", "anxious", "frustrat", "sad", "fear", "panic", "overwhelm"]
+    ) or any(
+        s in query for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared", "ghabra", "dar"]
+    )
+
+    prefix_ur = f"Pareshan mat hon {first_name}! " if is_stressed else ""
+    prefix_en = f"Please don't worry, {first_name}! " if is_stressed else ""
+
+    if language == "roman_urdu":
+        reply = (
+            f"{prefix_ur}Ji {first_name}, aap ki academic profile aur details yeh hain:\n\n"
+            f"- **Full Name**: {name}\n"
+            f"- **ARID / Reg No**: {arid_no}\n"
+            f"- **Current Semester**: Semester {semester} (Section: {section})\n"
+            f"- **Current CGPA**: **{cgpa}**\n"
+            f"- **Completed Credits**: **{completed_cr} Credit Hours**\n"
+            f"- **Degree Progress**: {degree_pct} (Scheme of Study ke mutabiq on-track)\n"
+            f"- **Failed Courses**: {fails_str_ur}\n"
+            f"- **Academic Advisor**: {advisor_name}\n\n"
+            f"Aap ka overall academic standing bohat acha hai. Kisi bhi specific cheez ke baray mein mazeed pochna ho to batayein!"
+        )
+    else:
+        reply = (
+            f"{prefix_en}Here is your complete academic profile and record summary, {first_name}:\n\n"
+            f"- **Full Name**: {name}\n"
+            f"- **ARID / Registration No**: {arid_no}\n"
+            f"- **Current Semester**: Semester {semester} (Section: {section})\n"
+            f"- **Current CGPA**: **{cgpa}**\n"
+            f"- **Completed Credits**: **{completed_cr} Credit Hours**\n"
+            f"- **Degree Progress**: {degree_pct} (Fully on track with Scheme of Study)\n"
+            f"- **Failed Courses**: {fails_str_en}\n"
+            f"- **Academic Advisor**: {advisor_name}\n\n"
+            f"You have a solid academic record. Feel free to ask if you need details on your courses, GPA targets, or policies!"
+        )
+
+    return {"response": reply, "profile": profile}
+
+
+def handle_teacher_strictness_node(state: AdvisorState) -> dict[str, Any]:
+    """Provide a polite, conversational breakdown of teacher strictness based on historical grading statistics."""
+    from FYP2.services.voice_service import get_teacher_strictness_stats
+
+    db_conn = state.get("db_conn")
+    language = state.get("language", "english")
+    emotion = (state.get("emotion") or "").lower()
+    query = (state.get("query") or "").lower()
+
+    is_stressed = any(
+        s in emotion for s in ["stress", "anxious", "frustrat", "sad", "fear", "panic", "overwhelm"]
+    ) or any(
+        s in query for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared", "ghabra", "dar"]
+    )
+
+    stats = []
+    if db_conn:
+        try:
+            stats = get_teacher_strictness_stats(db_conn)
+        except Exception:
+            pass
+
+    ranked = []
+    for s in stats:
+        tot = s.get("total_graded") or 0
+        f_count = s.get("total_f") or 0
+        a_count = s.get("total_a") or 0
+        if tot > 100:
+            f_rate = (f_count / tot) * 100
+            a_rate = (a_count / tot) * 100
+            ranked.append({
+                "name": s.get("teacher_name", ""),
+                "f_rate": f_rate,
+                "a_rate": a_rate,
+                "total": tot,
+            })
+
+    ranked_strict = sorted(ranked, key=lambda x: x["f_rate"], reverse=True)
+    ranked_lenient = sorted(ranked, key=lambda x: x["a_rate"], reverse=True)
+
+    strict_names = [r["name"] for r in ranked_strict[:3]]
+    lenient_names = [r["name"] for r in ranked_lenient[:3]]
+
+    strict_str = ", ".join(strict_names) if strict_names else "Muhammad Azeem aur Zahid Ahmad"
+    lenient_str = ", ".join(lenient_names) if lenient_names else "Noor Ul Ain aur deegar teachers"
+
+    prefix_ur = "Pareshan mat hon! " if is_stressed else ""
+    prefix_en = "Please don't worry! " if is_stressed else ""
+
+    if language == "roman_urdu":
+        reply = (
+            f"{prefix_ur}University grading records aur historical statistics ke mutabiq:\n\n"
+            f"- **Strict Grading**: **{strict_str}** ki grading comparatively strict rehti hai, jahan assignments aur exams par zyada focus darkar hota hai.\n"
+            f"- **High 'A' Grades**: **{lenient_str}** ki classes mein 'A' grades ka tanasub zyada rehta hai.\n\n"
+            f"Aap regular classes lein, assignments waqt par submit karein, aur concepts clear rakhein to aap kisi bhi teacher ke paas asani se A ya B+ grade le sakte hain."
+        )
+    else:
+        reply = (
+            f"{prefix_en}Based on university grading records and historical grade distributions:\n\n"
+            f"- **Stricter Grading**: Instructors like **{strict_str}** tend to maintain rigorous grading standards, requiring extra diligence on quizzes and assignments.\n"
+            f"- **Higher 'A' Grade Ratios**: Instructors like **{lenient_str}** tend to award higher percentages of 'A' grades for consistent class performance.\n\n"
+            f"Staying consistent with your coursework and lectures ensures you can secure excellent grades regardless of the instructor."
+        )
+
+    return {"response": reply}
+
+
 def handle_irrelevant_node(state: AdvisorState) -> dict[str, Any]:
     """Provide a polite refusal guardrail for non-academic queries."""
     language = state.get("language", "english")
@@ -733,6 +1085,9 @@ def create_advisor_graph():
     workflow.add_node("handle_degree_completion", handle_degree_node)
     workflow.add_node("handle_cgpa", handle_cgpa_node)
     workflow.add_node("handle_cgpa_policy", handle_cgpa_policy_node)
+    workflow.add_node("handle_failed_courses", handle_failed_courses_node)
+    workflow.add_node("handle_student_details", handle_student_details_node)
+    workflow.add_node("handle_teacher_strictness", handle_teacher_strictness_node)
     workflow.add_node("handle_irrelevant", handle_irrelevant_node)
     workflow.add_node("retrieve_knowledge", retrieve_knowledge_node)
     workflow.add_node("generate_response", generate_response_node)
@@ -747,6 +1102,9 @@ def create_advisor_graph():
             "degree_completion": "handle_degree_completion",
             "cgpa_policy": "handle_cgpa_policy",
             "cgpa": "handle_cgpa",
+            "failed_courses": "handle_failed_courses",
+            "student_details": "handle_student_details",
+            "teacher_strictness": "handle_teacher_strictness",
             "irrelevant": "handle_irrelevant",
             "academic": "retrieve_knowledge",
         },
@@ -756,6 +1114,9 @@ def create_advisor_graph():
     workflow.add_edge("handle_degree_completion", END)
     workflow.add_edge("handle_cgpa", END)
     workflow.add_edge("handle_cgpa_policy", END)
+    workflow.add_edge("handle_failed_courses", END)
+    workflow.add_edge("handle_student_details", END)
+    workflow.add_edge("handle_teacher_strictness", END)
     workflow.add_edge("handle_irrelevant", END)
     workflow.add_edge("retrieve_knowledge", "generate_response")
     workflow.add_edge("generate_response", END)

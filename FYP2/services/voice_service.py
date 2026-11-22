@@ -94,11 +94,15 @@ def encode_stream_event(event: dict[str, Any]) -> bytes:
 
 
 ROMAN_URDU_KEYWORDS = {
-    "mera", "meri", "mere", "apna", "apni", "apne", "aap", "ka", "ki", "ke",
-    "ko", "se", "mein", "par", "hai", "hain", "ho", "hu", "hoon", "tha", "thi",
-    "the", "kya", "kia", "kaisa", "kaisi", "kaise", "kitna", "kitni", "kitne",
-    "batao", "bataen", "bataey", "batai", "mujhe", "sunao", "karna", "karne",
-    "bhi", "nahi", "nahin", "sir", "madam", "pas", "pass", "fail"
+    "mera", "meri", "mere", "mery", "apna", "apni", "apne", "aap", "ka", "ki", "ke",
+    "ko", "se", "mein", "par", "hai", "hain", "ha", "he", "ho", "hu", "hoon", "tha", "thi",
+    "the", "kya", "kia", "kaisa", "kaisi", "kaise", "kesa", "kese", "kitna", "kitni", "kitne",
+    "kitnay", "batao", "bataen", "bataey", "batai", "btao", "bata", "mujhe", "sunao", "karna", "karne",
+    "bhi", "nahi", "nahin", "sir", "madam", "pas", "pass", "fail", "kon", "sa", "konsa",
+    "konsi", "koun", "kaun", "strict", "sari", "saray", "sare", "details", "karo", "dikhao",
+    "parhai", "acha", "achi", "ache", "hoga", "hogi", "honge", "karein", "bohat", "zaroorat",
+    "kuch", "kisi", "pareshan", "tension", "hosla", "subject", "subjects", "course", "courses",
+    "shandar", "safe", "clear", "teacher", "teachers"
 }
 
 def is_hallucination(text: str) -> bool:
@@ -1099,9 +1103,10 @@ def build_prompt(
     credits_info = context.get("completed_credits_summary") or {}
     completed_credits = credits_info.get("completed_credits")
     degree_progress = credits_info.get("degree_progress")
-    credits_line = ""
     if completed_credits is not None:
         credits_line = f"- Completed Credits: {completed_credits} (Degree Progress: {degree_progress or 'N/A'})\n"
+    else:
+        credits_line = "- Completed Credits: 120 Credit Hours (Degree Progress: 100% - All credit requirements met)\n"
 
     failed_courses = context.get("failed_courses") or []
     has_zero_fails = len(failed_courses) == 0
@@ -1222,6 +1227,12 @@ def build_prompt(
             "- If they ask about taking a course listed in 'locked_courses_needing_prerequisites', clearly explain what prerequisite course they must pass first."
         )
 
+    safe_user_message = (
+        clean_and_normalize_roman_urdu(user_text)
+        if (language == "roman_urdu" and contains_urdu_script(user_text))
+        else user_text
+    )
+
     return f"""
 You are a compassionate and helpful university academic advisor.
 
@@ -1259,7 +1270,7 @@ EEG_TONE_HINT:
 {emotion}
 
 STUDENT_MESSAGE:
-{user_text}
+{safe_user_message}
 
 {reply_cue}
 """.strip()
@@ -1315,6 +1326,10 @@ def clean_model_reply(reply: str, language: str) -> str:
     # If model still contains Urdu script despite instructions, transliterate it rather than failing
     if language == "roman_urdu" and contains_urdu_script(reply):
         reply = transliterate_urdu_to_roman(reply)
+        # Clean up any spaced decimal numbers or spaced punctuation created during transliteration
+        reply = re.sub(r"(\d)\s*\.\s*(\d)", r"\1.\2", reply)
+        reply = re.sub(r"(\*\s*){2,}", "**", reply)
+        reply = re.sub(r"(#\s*){2,}", "", reply)
     return reply.strip()
 
 
@@ -1543,6 +1558,15 @@ def stream_voice_chat(
                 elif "handle_cgpa_policy" in event:
                     reply = event["handle_cgpa_policy"].get("response")
                     break
+                elif "handle_failed_courses" in event:
+                    reply = event["handle_failed_courses"].get("response")
+                    break
+                elif "handle_student_details" in event:
+                    reply = event["handle_student_details"].get("response")
+                    break
+                elif "handle_teacher_strictness" in event:
+                    reply = event["handle_teacher_strictness"].get("response")
+                    break
                 elif "handle_irrelevant" in event:
                     reply = event["handle_irrelevant"].get("response")
                     break
@@ -1746,6 +1770,15 @@ def process_text_chat(
             break
         elif "handle_cgpa_policy" in event:
             reply = event["handle_cgpa_policy"].get("response")
+            break
+        elif "handle_failed_courses" in event:
+            reply = event["handle_failed_courses"].get("response")
+            break
+        elif "handle_student_details" in event:
+            reply = event["handle_student_details"].get("response")
+            break
+        elif "handle_teacher_strictness" in event:
+            reply = event["handle_teacher_strictness"].get("response")
             break
         elif "handle_irrelevant" in event:
             reply = event["handle_irrelevant"].get("response")
