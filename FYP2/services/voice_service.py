@@ -273,7 +273,20 @@ def get_student_profile(student_id: str, db_conn):
             """,
             (student_id,),
         )
-        return cur.fetchone()
+        row = cur.fetchone()
+        if not row:
+            return None
+        if isinstance(row, dict):
+            return row
+        return {
+            "name": row[0],
+            "registration_no": row[1],
+            "cgpa": row[2],
+            "semester": row[3],
+            "section_code": row[4],
+            "advisor_name": row[5],
+            "advisor_designation": row[6] if len(row) > 6 else None,
+        }
     finally:
         cur.close()
 
@@ -391,26 +404,194 @@ def get_course_prerequisites(db_conn):
         cur.close()
 
 
-def get_teacher_strictness_stats(db_conn):
+def get_teacher_strictness_stats(db_conn, active_only: bool = True):
     cur = db_conn.cursor()
     try:
+        if active_only:
+            cur.execute(
+                """
+                WITH active_teachers AS (
+                    SELECT DISTINCT co.teacher_id
+                    FROM Course_Offering co
+                    WHERE co.session IN (
+                        SELECT DISTINCT session FROM Course_Offering ORDER BY session DESC LIMIT 2
+                    )
+                )
+                SELECT u.name AS teacher_name,
+                       COUNT(e.grade) AS total_graded,
+                       COUNT(*) FILTER (WHERE e.grade = 'A') AS total_a,
+                       COUNT(*) FILTER (WHERE e.grade = 'F') AS total_f,
+                       ROUND(COALESCE(COUNT(*) FILTER (WHERE e.grade = 'F')::numeric / NULLIF(COUNT(e.grade), 0) * 100, 0), 1) AS f_rate,
+                       ROUND(COALESCE(COUNT(*) FILTER (WHERE e.grade = 'A')::numeric / NULLIF(COUNT(e.grade), 0) * 100, 0), 1) AS a_rate
+                FROM active_teachers at
+                JOIN Teacher t ON at.teacher_id = t.teacher_id
+                JOIN Users u ON t.user_id = u.user_id
+                LEFT JOIN Course_Offering co_hist ON t.teacher_id = co_hist.teacher_id
+                LEFT JOIN Enrolment e ON co_hist.offering_id = e.offering_id AND e.grade IS NOT NULL
+                GROUP BY u.name
+                HAVING COUNT(e.grade) >= 50
+                ORDER BY f_rate DESC;
+                """
+            )
+            rows = cur.fetchall()
+            if rows:
+                return rows
+
         cur.execute(
             """
             SELECT u.name AS teacher_name,
                    COUNT(e.grade) AS total_graded,
                    COUNT(*) FILTER (WHERE e.grade = 'A') AS total_a,
-                   COUNT(*) FILTER (WHERE e.grade = 'F') AS total_f
+                   COUNT(*) FILTER (WHERE e.grade = 'F') AS total_f,
+                   ROUND(COALESCE(COUNT(*) FILTER (WHERE e.grade = 'F')::numeric / NULLIF(COUNT(e.grade), 0) * 100, 0), 1) AS f_rate,
+                   ROUND(COALESCE(COUNT(*) FILTER (WHERE e.grade = 'A')::numeric / NULLIF(COUNT(e.grade), 0) * 100, 0), 1) AS a_rate
             FROM Teacher t
             JOIN Users u ON t.user_id = u.user_id
             JOIN Course_Offering co ON t.teacher_id = co.teacher_id
             JOIN Enrolment e ON co.offering_id = e.offering_id
             WHERE e.grade IS NOT NULL
             GROUP BY u.name
-            ORDER BY total_f DESC
+            HAVING COUNT(e.grade) >= 50
+            ORDER BY f_rate DESC
             LIMIT 30;
             """
         )
         return cur.fetchall()
+    finally:
+        cur.close()
+
+
+def extract_course_mention(text: str, db_conn) -> Optional[dict[str, str]]:
+    """Extract course code or title mentioned in the user query."""
+    if not text or not db_conn:
+        return None
+
+    code_match = re.search(r"\b([A-Za-z]{3})[\s-]*(\d{3})\b", text)
+    candidate_code = None
+    if code_match:
+        candidate_code = f"{code_match.group(1).upper()}-{code_match.group(2)}"
+
+    abbr_map = {
+        "oop": "CSC-102",
+        "pf": "CSC-101",
+        "dsa": "CSC-201",
+        "data structures": "CSC-201",
+        "data structure": "CSC-201",
+        "web tech": "CSC-251",
+        "web technology": "CSC-251",
+        "web technologies": "CSC-251",
+        "automata": "CSC-302",
+        "theory of automata": "CSC-302",
+        "dbms": "CSC-303",
+        "database": "CSC-303",
+        "databases": "CSC-303",
+        "nlp": "CAI-364",
+        "natural language processing": "CAI-364",
+        "ml": "CAI-262",
+        "machine learning": "CAI-262",
+        "ai": "CAI-261",
+        "programming for ai": "CAI-261",
+        "os": "CSC-301",
+        "operating systems": "CSC-301",
+        "operating system": "CSC-301",
+        "computer vision": "CAI-363",
+        "cv": "CAI-363",
+        "deep learning": "CAI-361",
+        "ann": "CAI-361",
+        "ict": "CSC-100",
+        "se": "CSC-202",
+        "software engineering": "CSC-202",
+    }
+    text_lower = text.lower()
+
+    cur = db_conn.cursor()
+    try:
+        if candidate_code:
+            cur.execute("SELECT course_id, title FROM Course WHERE UPPER(course_id) = %s LIMIT 1;", (candidate_code,))
+            row = cur.fetchone()
+            if row:
+                return {"course_id": _row_val(row, "course_id", 0), "title": _row_val(row, "title", 1)}
+
+        for abbr, cid in abbr_map.items():
+            if re.search(r"\b" + re.escape(abbr) + r"\b", text_lower):
+                cur.execute("SELECT course_id, title FROM Course WHERE course_id = %s LIMIT 1;", (cid,))
+                row = cur.fetchone()
+                if row:
+                    return {"course_id": _row_val(row, "course_id", 0), "title": _row_val(row, "title", 1)}
+
+        cur.execute("SELECT DISTINCT course_id, title FROM Course;")
+        for row in cur.fetchall():
+            c_id = _row_val(row, "course_id", 0)
+            c_title = _row_val(row, "title", 1) or ""
+            if len(c_title) > 4 and c_title.lower() in text_lower:
+                return {"course_id": c_id, "title": c_title}
+    except Exception:
+        pass
+    finally:
+        cur.close()
+
+    return None
+
+
+def get_course_teachers_strictness_stats(course_id_or_title: str, db_conn) -> list[dict[str, Any]]:
+    """Retrieve all teachers teaching a specific course in recent sessions, ranked by strictness."""
+    cur = db_conn.cursor()
+    try:
+        cur.execute(
+            """
+            WITH target_course AS (
+                SELECT course_id, title 
+                FROM Course 
+                WHERE course_id ILIKE %s OR title ILIKE %s 
+                LIMIT 1
+            ),
+            target_offerings AS (
+                SELECT DISTINCT ON (co.offering_id)
+                       co.offering_id,
+                       co.course_id,
+                       tc.title,
+                       cs.section_code,
+                       co.session,
+                       t.teacher_id,
+                       u.name AS teacher_name
+                FROM Course_Offering co
+                JOIN target_course tc ON co.course_id = tc.course_id
+                JOIN Class_Section cs ON co.section_id = cs.section_id
+                JOIN Teacher t ON co.teacher_id = t.teacher_id
+                JOIN Users u ON t.user_id = u.user_id
+                WHERE co.session IN (SELECT DISTINCT session FROM Course_Offering ORDER BY session DESC LIMIT 2)
+            )
+            SELECT ct.course_id,
+                   ct.title,
+                   ct.teacher_name,
+                   array_agg(DISTINCT ct.section_code) AS sections,
+                   COUNT(e.grade) AS total_graded,
+                   COUNT(*) FILTER (WHERE e.grade = 'A') AS total_a,
+                   COUNT(*) FILTER (WHERE e.grade = 'F') AS total_f,
+                   ROUND(COALESCE(COUNT(*) FILTER (WHERE e.grade = 'F')::numeric / NULLIF(COUNT(e.grade), 0) * 100, 0), 1) AS f_rate,
+                   ROUND(COALESCE(COUNT(*) FILTER (WHERE e.grade = 'A')::numeric / NULLIF(COUNT(e.grade), 0) * 100, 0), 1) AS a_rate
+            FROM target_offerings ct
+            LEFT JOIN Course_Offering co_hist ON ct.teacher_id = co_hist.teacher_id
+            LEFT JOIN Enrolment e ON co_hist.offering_id = e.offering_id AND e.grade IS NOT NULL
+            GROUP BY ct.course_id, ct.title, ct.teacher_name
+            ORDER BY f_rate ASC, a_rate DESC;
+            """,
+            (f"%{course_id_or_title}%", f"%{course_id_or_title}%"),
+        )
+        results = []
+        for r in cur.fetchall():
+            results.append({
+                "course_id": _row_val(r, "course_id", 0),
+                "title": _row_val(r, "title", 1),
+                "teacher_name": _row_val(r, "teacher_name", 2),
+                "sections": _row_val(r, "sections", 3, []),
+                "total_graded": int(_row_val(r, "total_graded", 4, 0)),
+                "total_a": int(_row_val(r, "total_a", 5, 0)),
+                "total_f": int(_row_val(r, "total_f", 6, 0)),
+                "f_rate": float(_row_val(r, "f_rate", 7, 0.0)),
+                "a_rate": float(_row_val(r, "a_rate", 8, 0.0)),
+            })
+        return results
     finally:
         cur.close()
 
@@ -1091,13 +1272,28 @@ def build_prompt(
     context: dict[str, Any],
     knowledge: str,
 ) -> str:
-    profile = context.get("profile") or {}
-    student_name = profile.get("name") or profile.get("full_name") or "Student"
-    arid_no = profile.get("registration_no") or profile.get("sid") or "Unknown"
-    semester = str(profile.get("semester") or "Unknown")
-    section = str(profile.get("section_code") or "Unknown")
-    cgpa = str(profile.get("cgpa") or "N/A")
-    advisor_name = profile.get("advisor_name") or "N/A"
+    raw_profile = context.get("profile") or {}
+    if isinstance(raw_profile, (list, tuple)):
+        student_name = raw_profile[0] if len(raw_profile) > 0 else "Student"
+        arid_no = raw_profile[1] if len(raw_profile) > 1 else "Unknown"
+        cgpa = str(raw_profile[2]) if len(raw_profile) > 2 else "N/A"
+        semester = str(raw_profile[3]) if len(raw_profile) > 3 else "Unknown"
+        section = str(raw_profile[4]) if len(raw_profile) > 4 else "Unknown"
+        advisor_name = raw_profile[5] if len(raw_profile) > 5 else "N/A"
+    elif isinstance(raw_profile, dict):
+        student_name = raw_profile.get("name") or raw_profile.get("full_name") or "Student"
+        arid_no = raw_profile.get("registration_no") or raw_profile.get("sid") or "Unknown"
+        semester = str(raw_profile.get("semester") or "Unknown")
+        section = str(raw_profile.get("section_code") or "Unknown")
+        cgpa = str(raw_profile.get("cgpa") or "N/A")
+        advisor_name = raw_profile.get("advisor_name") or "N/A"
+    else:
+        student_name = "Student"
+        arid_no = "Unknown"
+        semester = "Unknown"
+        section = "Unknown"
+        cgpa = "N/A"
+        advisor_name = "N/A"
     first_name = student_name.split()[0] if student_name else "Student"
 
     credits_info = context.get("completed_credits_summary") or {}
@@ -1558,6 +1754,12 @@ def stream_voice_chat(
                 elif "handle_cgpa_policy" in event:
                     reply = event["handle_cgpa_policy"].get("response")
                     break
+                elif "handle_course_drop_policy" in event:
+                    reply = event["handle_course_drop_policy"].get("response")
+                    break
+                elif "handle_semester_freeze_policy" in event:
+                    reply = event["handle_semester_freeze_policy"].get("response")
+                    break
                 elif "handle_failed_courses" in event:
                     reply = event["handle_failed_courses"].get("response")
                     break
@@ -1770,6 +1972,12 @@ def process_text_chat(
             break
         elif "handle_cgpa_policy" in event:
             reply = event["handle_cgpa_policy"].get("response")
+            break
+        elif "handle_course_drop_policy" in event:
+            reply = event["handle_course_drop_policy"].get("response")
+            break
+        elif "handle_semester_freeze_policy" in event:
+            reply = event["handle_semester_freeze_policy"].get("response")
             break
         elif "handle_failed_courses" in event:
             reply = event["handle_failed_courses"].get("response")

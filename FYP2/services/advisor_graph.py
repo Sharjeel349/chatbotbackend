@@ -142,6 +142,26 @@ FAILED_COURSES_PATTERNS = (
     "course fail",
     "subject fail",
     "subjects fail",
+    "subject fail ha kya kro",
+    "subject fail hai kya karu",
+    "course fail ha kya kro",
+    "course fail hai kya karu",
+    "fail hai kya karu",
+    "fail ha kya kro",
+    "fail he kya karu",
+    "fail hai",
+    "fail ha",
+    "fail he",
+    "fail hogya",
+    "fail ho gya",
+    "fail ho gaya",
+    "course fail ho gaya",
+    "subject fail ho gaya",
+    "fail hua",
+    "fail ho jaye",
+    "agar subject fail ho",
+    "agar course fail ho",
+    "agar course fail ho jaye",
     "کوئی کورس فیل",
     "فیل کورس",
     "کوئی سبجیکٹ فیل",
@@ -187,6 +207,9 @@ TEACHER_STRICTNESS_PATTERNS = (
     "teacher strictness",
     "grading strict",
     "lenient teacher",
+    "kam strict",
+    "kam strict teacher",
+    "sab se kam strict",
     "kon strict hai",
     "kon strict ha",
     "kon strict he",
@@ -194,10 +217,51 @@ TEACHER_STRICTNESS_PATTERNS = (
     "who is strict teacher",
     "strict instructors",
     "strict grading",
+    "kis ke sath enroll",
+    "kis teacher ke sath enroll",
+    "kon sa teacher parha raha",
+    "konsa teacher parha raha",
+    "kon parha raha",
+    "which teacher should i enroll",
+    "who is teaching",
     "کون سا ٹیچر سٹرکٹ",
     "کونسا ٹیچر سٹرکٹ",
     "سٹرکٹ ٹیچر",
     "کون سا ٹیچر سخت",
+)
+
+COURSE_DROP_POLICY_PATTERNS = (
+    "course drop policy",
+    "course drop",
+    "drop policy",
+    "course drop kya hai",
+    "subject drop policy",
+    "subject drop",
+    "course withdraw",
+    "course withdrawal",
+    "withdrawal policy",
+    "withdraw policy",
+    "subject withdraw",
+    "add/drop",
+    "add drop",
+    "drop karne ki policy",
+    "کورس ڈراپ",
+    "کورس ڈراپ پالیسی",
+    "ڈراپ پالیسی",
+    "ودڈرا پالیسی",
+)
+
+SEMESTER_FREEZE_POLICY_PATTERNS = (
+    "semester freeze policy",
+    "freeze policy",
+    "semester freeze",
+    "freeze semester",
+    "freeze rules",
+    "semester kaise freeze",
+    "semester freeze karne",
+    "freeze policy kya hai",
+    "سمسٹر فریز",
+    "فریز پالیسی",
 )
 
 SEMESTER_CGPA_POLICY_PATTERNS = (
@@ -282,27 +346,35 @@ def classify_intent_node(state: AdvisorState) -> dict[str, Any]:
     if matches(STUDENT_DETAILS_PATTERNS):
         return {"intent": "student_details"}
 
-    # 5. Check for failed courses / backlog inquiries (personal standing)
-    if matches(FAILED_COURSES_PATTERNS) and not any(h in normalized for h in ["what if", "policy", "rules", "procedure", "kya hota"]):
-        return {"intent": "failed_courses"}
+    # 5. Check for course drop and withdrawal policy inquiries
+    if matches(COURSE_DROP_POLICY_PATTERNS):
+        return {"intent": "course_drop_policy"}
 
-    # 6. Check for teacher strictness inquiries
+    # 6. Check for semester freeze policy inquiries
+    if matches(SEMESTER_FREEZE_POLICY_PATTERNS):
+        return {"intent": "semester_freeze_policy"}
+
+    # 7. Check for teacher strictness and course enrollment teacher inquiries
     if matches(TEACHER_STRICTNESS_PATTERNS):
         return {"intent": "teacher_strictness"}
 
-    # 7. Check for degree completion inquiries
+    # 8. Check for failed courses / backlog inquiries (personal standing)
+    if matches(FAILED_COURSES_PATTERNS) and not any(h in normalized for h in ["what if", "rules", "procedure", "kya hota"]):
+        return {"intent": "failed_courses"}
+
+    # 9. Check for degree completion inquiries
     if matches(DEGREE_COMPLETION_PATTERNS):
         return {"intent": "degree_completion"}
 
-    # 8. Check for semester-wise CGPA & graduation policy inquiries
+    # 10. Check for semester-wise CGPA & graduation policy inquiries
     if matches(SEMESTER_CGPA_POLICY_PATTERNS):
         return {"intent": "cgpa_policy"}
 
-    # 9. Check for personal CGPA / GPA inquiries
+    # 11. Check for personal CGPA / GPA inquiries
     if matches(CGPA_PATTERNS):
         return {"intent": "cgpa"}
 
-    # 10. All other questions are treated as academic
+    # 12. All other questions are treated as academic
     return {"intent": "academic"}
 
 
@@ -734,8 +806,13 @@ def handle_greeting_node(state: AdvisorState) -> dict[str, Any]:
 
 
 def handle_failed_courses_node(state: AdvisorState) -> dict[str, Any]:
-    """Generate an accurate, reassuring response regarding failed courses / backlogs."""
-    from FYP2.services.voice_service import get_failed_courses, get_student_profile
+    """Generate an accurate, reassuring response regarding failed courses / backlogs, including recommended teachers for re-enrollment."""
+    from FYP2.services.voice_service import (
+        extract_course_mention,
+        get_course_teachers_strictness_stats,
+        get_failed_courses,
+        get_student_profile,
+    )
 
     profile = state.get("profile")
     db_conn = state.get("db_conn")
@@ -776,31 +853,78 @@ def handle_failed_courses_node(state: AdvisorState) -> dict[str, Any]:
     prefix_ur = f"Pareshan mat hon {first_name}! " if is_stressed else ""
     prefix_en = f"Please don't worry, {first_name}! " if is_stressed else ""
 
+    # Check if a specific course was mentioned in the user query (e.g. CSC-102, OOP, etc.)
+    course_info = extract_course_mention(query, db_conn) if db_conn else None
+
+    # If student mentioned a course OR has actual failed courses:
+    target_course_id = None
+    target_course_title = None
+    if course_info:
+        target_course_id = course_info["course_id"]
+        target_course_title = course_info["title"]
+    elif not has_zero_fails:
+        target_course_id = failed_courses[0].get("course_id")
+        target_course_title = failed_courses[0].get("title")
+
+    # If we have a target course, provide teacher recommendations for enrollment!
+    if target_course_id and db_conn:
+        course_teachers = get_course_teachers_strictness_stats(target_course_id, db_conn)
+        if course_teachers:
+            best_t = course_teachers[0]
+            count_t = len(course_teachers)
+            lines_ur = []
+            lines_en = []
+            for i, t in enumerate(course_teachers, start=1):
+                sec_str = ", ".join(t["sections"]) if t["sections"] else "N/A"
+                lines_ur.append(f"{i}. **{t['teacher_name']}** (Sections: {sec_str}) — Fail rate: **{t['f_rate']}%** ('A' grades: {t['a_rate']}%)")
+                lines_en.append(f"{i}. **{t['teacher_name']}** (Sections: {sec_str}) — Fail rate: **{t['f_rate']}%** ('A' grades: {t['a_rate']}%)")
+
+            teachers_list_ur = "\n".join(lines_ur)
+            teachers_list_en = "\n".join(lines_en)
+            best_sec = ", ".join(best_t["sections"]) if best_t["sections"] else "A"
+
+            if language == "roman_urdu":
+                reply = (
+                    f"{prefix_ur}Aap ke course **{target_course_id} ({target_course_title or 'Course'})** ko current semester mein total **{count_t} teachers** parha rahe hain:\n\n"
+                    f"{teachers_list_ur}\n\n"
+                    f"**Recommendation**: In mein se **{best_t['teacher_name']}** comparatively sab se kam strict aur lenient hain (un ka fail rate sab se kam hai: **{best_t['f_rate']}%**). "
+                    f"Aap **{best_t['teacher_name']}** ke section ({best_sec}) ke sath enroll kar lein taake aap asani se pass ho sakein aur behtar GPA le sakein!"
+                )
+            else:
+                reply = (
+                    f"{prefix_en}For your course **{target_course_id} ({target_course_title or 'Course'})**, total **{count_t} instructor(s)** are teaching in the current semester:\n\n"
+                    f"{teachers_list_en}\n\n"
+                    f"**Recommendation**: Among these, **{best_t['teacher_name']}** has the lowest failure rate (**{best_t['f_rate']}%**) and is more lenient. "
+                    f"We recommend enrolling with **{best_t['teacher_name']}** (Section: {best_sec}) to comfortably clear the course with a high grade!"
+                )
+            return {"response": reply, "profile": profile}
+
     if has_zero_fails:
         if language == "roman_urdu":
             reply = (
                 f"{prefix_ur}Ji nahi, aap ka koi bhi course fail nahi hai (0 failed courses / backlogs). "
                 f"Aap ka academic record bilkul clean hai aur aap ka current CGPA {cgpa} bohat acha hai. "
-                f"Aap bilkul safe hain, kisi bhi subject ko repeat karne ki zaroorat nahi hai!"
+                f"Agar aap kisi specific subject (maslan CSC-102, CSC-201 wagera) ko repeat karne ke liye enroll karna chahte hain, to us subject ka naam batayein. "
+                f"Main foran check kar ke bata doonga ke abhi kaun se teachers parha rahe hain aur un mein se sab se kam strict teacher kaun hai!"
             )
         else:
             reply = (
                 f"{prefix_en}No, you do not have any failed courses (0 backlogs). "
                 f"Your academic record is completely clean and your current CGPA of {cgpa} is excellent. "
-                f"You do not need to repeat or retake any courses."
+                f"If you want to re-enroll in a specific course to improve your grade (e.g. CSC-102, CSC-201), simply name the course and I will check the current instructors and recommend the most lenient one!"
             )
     else:
         failed_titles = [f"{c.get('course_id', '')} {c.get('title', '')}".strip() for c in failed_courses]
         failed_str = ", ".join(failed_titles)
         if language == "roman_urdu":
             reply = (
-                f"{prefix_ur}Aap ke record ke mutabiq {len(failed_courses)} courses fail hain jinhein repeat karna hoga: {failed_str}. "
-                f"Hum mil kar is ka schedule plan kar sakte hain taake aap inhein aglay semester mein ba-asani clear kar sakein."
+                f"{prefix_ur}Aap ke record ke mutabiq {len(failed_courses)} courses fail hain: {failed_str}. "
+                f"Aap batayein ke aap kis subject mein enroll karna chahte hain, main foran check kar ke sab se kam strict teacher recommend kar doonga."
             )
         else:
             reply = (
-                f"{prefix_en}According to your records, you have {len(failed_courses)} failed course(s) to repeat: {failed_str}. "
-                f"We can plan your schedule so you can clear them smoothly in the upcoming semester."
+                f"{prefix_en}According to your records, you have {len(failed_courses)} failed course(s): {failed_str}. "
+                f"Let me know which course you plan to re-take, and I will recommend the instructor with the most lenient grading."
             )
 
     return {"response": reply, "profile": profile}
@@ -898,9 +1022,83 @@ def handle_student_details_node(state: AdvisorState) -> dict[str, Any]:
     return {"response": reply, "profile": profile}
 
 
+def handle_course_drop_policy_node(state: AdvisorState) -> dict[str, Any]:
+    """Provide the official BIIT / HEC course drop and withdrawal policy."""
+    language = state.get("language", "english")
+    emotion = (state.get("emotion") or "").lower()
+    query = (state.get("query") or "").lower()
+
+    is_stressed = any(
+        s in emotion for s in ["stress", "anxious", "frustrat", "sad", "fear", "panic", "overwhelm"]
+    ) or any(
+        s in query for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared"]
+    )
+
+    prefix_ur = "Pareshan mat hon! " if is_stressed else ""
+    prefix_en = "Please don't worry! " if is_stressed else ""
+
+    if language == "roman_urdu":
+        reply = (
+            f"{prefix_ur}BIIT aur HEC university policy ke mutabiq Course Drop aur Withdrawal ke qawaneen yeh hain:\n\n"
+            "- **Course Drop Period (Add / Drop - Pehle 2 Haftay)**: Semester shuru hone ke pehle **2 hafton** ke andar aap koi bhi subject drop kar sakte hain. Is muddat mein drop kiya gaya course transcript par nahi aata aur koi academic penalty nahi hoti.\n"
+            "- **Course Withdrawal Period (Mid-Term Se Pehle)**: 2 haftay guzarne ke baad se le kar **Mid-Term exams (8th week)** tak, aap Academic Advisor ki approval se course withdraw kar sakte hain. Transcript par **'W'** grade record hota hai, jo CGPA par asar nahi daalta, lekin tuition fees non-refundable hoti hain.\n"
+            "- **Failed Courses ('F' Grade)**: Agar kisi course mein **'F'** grade aa jaye, to usey aglay semester mein re-register aur repeat karna lazmi hota hai.\n"
+            "- **Minimum Credit Load (15 Credits)**: Koi bhi student aisa course drop nahi kar sakta jis se un ke registered semester credit hours mandatory minimum **15 credit hours** se kam ho jayein."
+        )
+    else:
+        reply = (
+            f"{prefix_en}According to official BIIT and HEC university policies, the Course Drop and Withdrawal rules are as follows:\n\n"
+            "- **Course Drop Period (Add/Drop - First 2 Weeks)**: Students may drop a course within the first **2 weeks** of the semester. A course dropped during this period will not appear on the official transcript and carries no academic penalty.\n"
+            "- **Course Withdrawal Period (Before Mid-Terms)**: From the 3rd week up to the **8th week (before Mid-Term exams)**, a student may officially withdraw from a course with advisor approval. A grade of **'W'** is recorded on the transcript; it does not affect CGPA, but tuition fees are non-refundable.\n"
+            "- **Failed Courses ('F' Grade)**: Any course resulting in an **'F'** grade is classified as failed and must be re-registered and repeated in a subsequent semester.\n"
+            "- **Minimum Semester Credit Ceiling**: A student cannot drop courses that reduce their registered semester load below the mandatory minimum of **15 credit hours**."
+        )
+
+    return {"response": reply}
+
+
+def handle_semester_freeze_policy_node(state: AdvisorState) -> dict[str, Any]:
+    """Provide the official BIIT / HEC semester freeze policy."""
+    language = state.get("language", "english")
+    emotion = (state.get("emotion") or "").lower()
+    query = (state.get("query") or "").lower()
+
+    is_stressed = any(
+        s in emotion for s in ["stress", "anxious", "frustrat", "sad", "fear", "panic", "overwhelm"]
+    ) or any(
+        s in query for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared"]
+    )
+
+    prefix_ur = "Pareshan mat hon! " if is_stressed else ""
+    prefix_en = "Please don't worry! " if is_stressed else ""
+
+    if language == "roman_urdu":
+        reply = (
+            f"{prefix_ur}BIIT aur HEC university regulations ke mutabiq Semester Freeze policy yeh hai:\n\n"
+            "- **Eligibility**: Kam az kam pehla semester pass karne ke baad regular students semester freeze ke liye apply kar sakte hain. First semester ke newly admitted students ko semester freeze ki ijazat nahi hoti.\n"
+            "- **Maximum Limit**: Poori undergraduate degree ke doraan student maximum **2 semesters** freeze kar sakta hai.\n"
+            "- **Degree Duration Impact**: Semester freeze karne se degree ka maximum permissible time extend nahi hota; poori degree ceiling limit **12 registered semesters** ke andar hi complete karni hoti hai.\n"
+            "- **Application Deadline**: Semester shuru hone ke pehle **2 hafton** ke andar Director Office mein application submit karna lazmi hai. Tamam previous dues clear hona aur prescribed freeze fee ada karna zaroori hai."
+        )
+    else:
+        reply = (
+            f"{prefix_en}According to official BIIT and HEC university policies, the Semester Freeze regulations are:\n\n"
+            "- **Eligibility**: Regular students who have completed at least their 1st semester are eligible. First-semester newly admitted students cannot freeze their semester under any circumstances.\n"
+            "- **Maximum Permissible Freeze**: A student is allowed to freeze up to a maximum of **2 semesters** during their entire undergraduate degree.\n"
+            "- **Degree Duration Ceiling**: Freezing a semester does not extend the maximum allowable degree duration. All degree requirements must still be completed within the absolute ceiling of **12 registered semesters**.\n"
+            "- **Application Deadline**: Applications must be submitted to the Academic Department / Director's Office within the first **2 weeks** of the semester after clearing all financial dues and paying the freeze fee."
+        )
+
+    return {"response": reply}
+
+
 def handle_teacher_strictness_node(state: AdvisorState) -> dict[str, Any]:
-    """Provide a polite, conversational breakdown of teacher strictness based on historical grading statistics."""
-    from FYP2.services.voice_service import get_teacher_strictness_stats
+    """Provide a polite, conversational breakdown of teacher strictness based on active semester offerings and historical statistics."""
+    from FYP2.services.voice_service import (
+        extract_course_mention,
+        get_course_teachers_strictness_stats,
+        get_teacher_strictness_stats,
+    )
 
     db_conn = state.get("db_conn")
     language = state.get("language", "english")
@@ -913,10 +1111,53 @@ def handle_teacher_strictness_node(state: AdvisorState) -> dict[str, Any]:
         s in query for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared", "ghabra", "dar"]
     )
 
+    prefix_ur = "Pareshan mat hon! " if is_stressed else ""
+    prefix_en = "Please don't worry! " if is_stressed else ""
+
+    # 1. Check if the query specifically asks about a course's teachers
+    course_info = extract_course_mention(query, db_conn) if db_conn else None
+    if course_info and db_conn:
+        course_id = course_info["course_id"]
+        course_title = course_info["title"]
+        teachers = get_course_teachers_strictness_stats(course_id, db_conn)
+        if teachers:
+            best_t = teachers[0]
+            count_t = len(teachers)
+
+            lines_ur = []
+            lines_en = []
+            for i, t in enumerate(teachers, start=1):
+                sec_str = ", ".join(t["sections"]) if t["sections"] else "N/A"
+                f_rate = t["f_rate"]
+                a_rate = t["a_rate"]
+                lines_ur.append(f"{i}. **{t['teacher_name']}** (Sections: {sec_str}) — Fail rate: **{f_rate}%** ('A' grades: {a_rate}%)")
+                lines_en.append(f"{i}. **{t['teacher_name']}** (Sections: {sec_str}) — Fail rate: **{f_rate}%** ('A' grades: {a_rate}%)")
+
+            teachers_list_ur = "\n".join(lines_ur)
+            teachers_list_en = "\n".join(lines_en)
+            best_sec = ", ".join(best_t["sections"]) if best_t["sections"] else "A"
+
+            if language == "roman_urdu":
+                reply = (
+                    f"{prefix_ur}Aap ke course **{course_id} ({course_title})** ko current semester mein total **{count_t} teachers** parha rahe hain:\n\n"
+                    f"{teachers_list_ur}\n\n"
+                    f"**Recommendation**: In mein se **{best_t['teacher_name']}** comparatively sab se kam strict aur lenient hain (un ka fail rate sab se kam hai: **{best_t['f_rate']}%**, aur passing ratio behtar hai). "
+                    f"Aap **{best_t['teacher_name']}** ke section ({best_sec}) ke sath enroll kar lein taake aap asani se pass ho sakein aur behtar GPA le sakein!"
+                )
+            else:
+                reply = (
+                    f"{prefix_en}For your course **{course_id} ({course_title})**, a total of **{count_t} instructor(s)** are teaching in the current semester:\n\n"
+                    f"{teachers_list_en}\n\n"
+                    f"**Recommendation**: Among these, **{best_t['teacher_name']}** has the lowest failure rate (**{best_t['f_rate']}%**) and maintains more lenient grading. "
+                    f"We recommend enrolling with **{best_t['teacher_name']}** (Section: {best_sec}) to comfortably clear the course and secure a strong grade!"
+                )
+            return {"response": reply}
+
+    # 2. General teacher strictness (filter to teachers actively teaching in the current semester)
     stats = []
     if db_conn:
         try:
-            stats = get_teacher_strictness_stats(db_conn)
+            stats = get_teacher_strictness_stats(db_conn, active_only=True)
         except Exception:
             pass
 
@@ -925,41 +1166,42 @@ def handle_teacher_strictness_node(state: AdvisorState) -> dict[str, Any]:
         tot = s.get("total_graded") or 0
         f_count = s.get("total_f") or 0
         a_count = s.get("total_a") or 0
-        if tot > 100:
+        f_rate = s.get("f_rate")
+        a_rate = s.get("a_rate")
+        if f_rate is None and tot > 0:
             f_rate = (f_count / tot) * 100
+        if a_rate is None and tot > 0:
             a_rate = (a_count / tot) * 100
-            ranked.append({
-                "name": s.get("teacher_name", ""),
-                "f_rate": f_rate,
-                "a_rate": a_rate,
-                "total": tot,
-            })
+
+        ranked.append({
+            "name": s.get("teacher_name", ""),
+            "f_rate": float(f_rate or 0.0),
+            "a_rate": float(a_rate or 0.0),
+            "total": tot,
+        })
 
     ranked_strict = sorted(ranked, key=lambda x: x["f_rate"], reverse=True)
     ranked_lenient = sorted(ranked, key=lambda x: x["a_rate"], reverse=True)
 
-    strict_names = [r["name"] for r in ranked_strict[:3]]
-    lenient_names = [r["name"] for r in ranked_lenient[:3]]
+    strict_top = [f"**{r['name']}** (Fail rate: {r['f_rate']}%)" for r in ranked_strict[:3]]
+    lenient_top = [f"**{r['name']}** ('A' grades: {r['a_rate']}%)" for r in ranked_lenient[:3]]
 
-    strict_str = ", ".join(strict_names) if strict_names else "Muhammad Azeem aur Zahid Ahmad"
-    lenient_str = ", ".join(lenient_names) if lenient_names else "Noor Ul Ain aur deegar teachers"
-
-    prefix_ur = "Pareshan mat hon! " if is_stressed else ""
-    prefix_en = "Please don't worry! " if is_stressed else ""
+    strict_str = ", ".join(strict_top) if strict_top else "**NOOR UL AIN, ZAHID AHMAD, AZHAR JAMIL**"
+    lenient_str = ", ".join(lenient_top) if lenient_top else "**ABDUL HAMEED, MUHAMMAD SHABBIR, SUMAIRA YOUSAF**"
 
     if language == "roman_urdu":
         reply = (
-            f"{prefix_ur}University grading records aur historical statistics ke mutabiq:\n\n"
-            f"- **Strict Grading**: **{strict_str}** ki grading comparatively strict rehti hai, jahan assignments aur exams par zyada focus darkar hota hai.\n"
-            f"- **High 'A' Grades**: **{lenient_str}** ki classes mein 'A' grades ka tanasub zyada rehta hai.\n\n"
-            f"Aap regular classes lein, assignments waqt par submit karein, aur concepts clear rakhein to aap kisi bhi teacher ke paas asani se A ya B+ grade le sakte hain."
+            f"{prefix_ur}Current semester mein parhane wale teachers ke historical grading records aur statistics ke mutabiq:\n\n"
+            f"- **Strict Grading Teachers**: {strict_str} ki grading comparatively strict rehti hai, jahan quizzes aur exams par zyada mehnat darkar hoti hai.\n"
+            f"- **High 'A' Grades / Lenient Teachers**: {lenient_str} ki classes mein passing aur 'A' grades ka tanasub zyada rehta hai.\n\n"
+            f"Aap regular classes attend karein, assignments waqt par submit karein, aur concepts clear rakhein to aap kisi bhi teacher ke paas asani se A ya B+ grade le sakte hain."
         )
     else:
         reply = (
-            f"{prefix_en}Based on university grading records and historical grade distributions:\n\n"
-            f"- **Stricter Grading**: Instructors like **{strict_str}** tend to maintain rigorous grading standards, requiring extra diligence on quizzes and assignments.\n"
-            f"- **Higher 'A' Grade Ratios**: Instructors like **{lenient_str}** tend to award higher percentages of 'A' grades for consistent class performance.\n\n"
-            f"Staying consistent with your coursework and lectures ensures you can secure excellent grades regardless of the instructor."
+            f"{prefix_en}Based on university grading records for instructors teaching in the current semester:\n\n"
+            f"- **Stricter Grading Standards**: Instructors such as {strict_str} tend to evaluate coursework strictly, requiring consistent preparation for quizzes and exams.\n"
+            f"- **Higher 'A' Grade Distributions**: Instructors such as {lenient_str} award higher proportions of top grades for consistent performance.\n\n"
+            f"Focusing on class lectures and timely submissions will ensure you secure strong grades regardless of the instructor."
         )
 
     return {"response": reply}
@@ -1085,6 +1327,8 @@ def create_advisor_graph():
     workflow.add_node("handle_degree_completion", handle_degree_node)
     workflow.add_node("handle_cgpa", handle_cgpa_node)
     workflow.add_node("handle_cgpa_policy", handle_cgpa_policy_node)
+    workflow.add_node("handle_course_drop_policy", handle_course_drop_policy_node)
+    workflow.add_node("handle_semester_freeze_policy", handle_semester_freeze_policy_node)
     workflow.add_node("handle_failed_courses", handle_failed_courses_node)
     workflow.add_node("handle_student_details", handle_student_details_node)
     workflow.add_node("handle_teacher_strictness", handle_teacher_strictness_node)
@@ -1101,6 +1345,8 @@ def create_advisor_graph():
             "identity": "handle_identity",
             "degree_completion": "handle_degree_completion",
             "cgpa_policy": "handle_cgpa_policy",
+            "course_drop_policy": "handle_course_drop_policy",
+            "semester_freeze_policy": "handle_semester_freeze_policy",
             "cgpa": "handle_cgpa",
             "failed_courses": "handle_failed_courses",
             "student_details": "handle_student_details",
@@ -1114,6 +1360,8 @@ def create_advisor_graph():
     workflow.add_edge("handle_degree_completion", END)
     workflow.add_edge("handle_cgpa", END)
     workflow.add_edge("handle_cgpa_policy", END)
+    workflow.add_edge("handle_course_drop_policy", END)
+    workflow.add_edge("handle_semester_freeze_policy", END)
     workflow.add_edge("handle_failed_courses", END)
     workflow.add_edge("handle_student_details", END)
     workflow.add_edge("handle_teacher_strictness", END)

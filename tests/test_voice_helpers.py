@@ -183,7 +183,7 @@ class VoiceHelperTests(unittest.TestCase):
 
         # Policy query also routes to academic and retrieves knowledge
         state_policy: AdvisorState = {
-            "query": "what is the semester freeze policy?",
+            "query": "how do course prerequisites work?",
             "language": "english",
             "profile": {"cgpa": 3.2},
         }
@@ -533,6 +533,70 @@ class VoiceHelperTests(unittest.TestCase):
             "pareshan mat hon" in reply.lower() or "tension" in reply.lower(),
             f"Expected stressed prefix in reply, got: {reply}",
         )
+
+    def test_course_drop_policy_instant_node(self):
+        state: AdvisorState = {
+            "query": "Course drop policy kya hai",
+            "language": "roman_urdu",
+            "student_id": "2023-ARID-0274",
+            "profile": {"name": "SHARJEEL AHMED"},
+        }
+        res = advisor_graph.invoke(state)
+        self.assertEqual(res.get("intent"), "course_drop_policy")
+        reply = res.get("response", "")
+        self.assertIn("2 hafton", reply.lower())
+        self.assertIn("15 credit hours", reply.lower())
+        self.assertIn("add / drop", reply.lower())
+
+    def test_semester_freeze_policy_instant_node(self):
+        state: AdvisorState = {
+            "query": "Semester freeze policy kya hai",
+            "language": "roman_urdu",
+            "student_id": "2023-ARID-0274",
+            "profile": {"name": "SHARJEEL AHMED"},
+        }
+        res = advisor_graph.invoke(state)
+        self.assertEqual(res.get("intent"), "semester_freeze_policy")
+        reply = res.get("response", "")
+        self.assertIn("2 semesters", reply.lower())
+        self.assertIn("12 registered semesters", reply.lower())
+
+    def test_failed_course_specific_enrollment_recommendation(self):
+        import psycopg2, os
+        from dotenv import load_dotenv
+        load_dotenv("FYP2/.env")
+        try:
+            conn = psycopg2.connect(
+                dbname=os.getenv("DB_NAME", "fyp_db"),
+                user=os.getenv("DB_USER", "sharjeel"),
+                password=os.getenv("DB_PASSWORD", "shamra349"),
+                host=os.getenv("DB_HOST", "localhost"),
+                port=os.getenv("DB_PORT", "5432"),
+            )
+        except Exception:
+            self.skipTest("DB connection unavailable for enrollment test")
+
+        try:
+            state: AdvisorState = {
+                "query": "CSC-102 fail hai kya karu kis ke sath enroll karu?",
+                "language": "roman_urdu",
+                "student_id": "2023-ARID-0274",
+                "db_conn": conn,
+                "profile": {
+                    "name": "SHARJEEL AHMED",
+                    "registration_no": "2023-ARID-0274",
+                    "cgpa": 3.86,
+                    "semester": "8",
+                },
+            }
+            res = advisor_graph.invoke(state)
+            self.assertIn(res.get("intent"), ["failed_courses", "teacher_strictness"])
+            reply = res.get("response", "")
+            self.assertIn("CSC-102", reply)
+            self.assertIn("FARHANA TANVEER", reply)
+            self.assertIn("enroll", reply.lower())
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":
