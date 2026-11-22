@@ -5,13 +5,13 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import threading
 import time
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import pyttsx3
 from pydub import AudioSegment
 
 logger = logging.getLogger(__name__)
@@ -105,78 +105,110 @@ CURATED_VOICE_META: Dict[str, Dict[str, Any]] = {
 _tts_lock = threading.Lock()
 
 
-def _is_say_available() -> bool:
-    """Check if macOS native 'say' utility is available."""
-    return shutil.which("say") is not None
+def _resolve_pyttsx3_voice(engine: pyttsx3.Engine, voice_name_or_id: str) -> Optional[str]:
+    """Find the best matching pyttsx3 voice ID for the given voice name or ID."""
+    target = (voice_name_or_id or "").strip().lower()
+    if not target:
+        return None
+
+    voices = engine.getProperty("voices") or []
+    # 1. Exact ID match
+    for v in voices:
+        if str(v.id).lower() == target:
+            return v.id
+
+    # 2. Exact Name match
+    for v in voices:
+        if str(v.name).lower() == target:
+            return v.id
+
+    # 3. Substring match in ID or Name
+    for v in voices:
+        vid_lower = str(v.id).lower()
+        vname_lower = str(v.name).lower()
+        if target in vid_lower or target in vname_lower:
+            return v.id
+
+    # 4. If target is Lekha/Urdu/Hindi, find any Hindi/Urdu voice
+    if any(k in target for k in ("lekha", "urdu", "hindi", "roman_urdu")):
+        for v in voices:
+            vid_lower = str(v.id).lower()
+            langs = [str(l).lower() for l in getattr(v, "languages", [])]
+            if "hi-in" in vid_lower or "lekha" in vid_lower or any("hi" in l or "ur" in l for l in langs):
+                return v.id
+
+    # 5. Fallback to English voice if Samantha requested
+    if "samantha" in target:
+        for v in voices:
+            vid_lower = str(v.id).lower()
+            vname_lower = str(v.name).lower()
+            if "samantha" in vid_lower or "samantha" in vname_lower:
+                return v.id
+
+    return None
 
 
 @lru_cache(maxsize=1)
 def get_system_voices() -> List[Dict[str, Any]]:
-    """Enumerate system TTS voices with structured metadata."""
+    """Enumerate system TTS voices completely via pyttsx3 with structured metadata."""
     voices: List[Dict[str, Any]] = []
+    try:
+        engine = pyttsx3.init()
+        py_voices = engine.getProperty("voices") or []
+        for v in py_voices:
+            vid = str(getattr(v, "id", "")).strip()
+            vname = str(getattr(v, "name", "")).strip()
+            if not vid and not vname:
+                continue
 
-    # 1. On macOS, parse native say voices for highest fidelity
-    if _is_say_available():
-        try:
-            cmd_output = subprocess.check_output(["say", "-v", "?"], text=True, timeout=5)
-            for line in cmd_output.strip().splitlines():
-                match = re.match(r"^([^\t]+?)\s{2,}([a-z]{2}_[A-Z]{2})\s+#\s*(.*)$", line)
-                if not match:
-                    continue
-                name, lang, example = match.groups()
-                name = name.strip()
-                lang = lang.strip()
+            langs = [str(l).lower() for l in getattr(v, "languages", [])]
+            lang_code = langs[0] if langs else "en_US"
 
-                meta = CURATED_VOICE_META.get(name, {})
-                display_name = meta.get("display_name", f"{name} ({lang})")
-                gender = meta.get("gender") or ("Female" if any(w in name.lower() for w in ("alice", "alva", "anna", "amelie", "carmit", "karen", "lekha", "moira", "samantha", "tessa", "kathy")) else "Male")
-                is_recommended = meta.get("is_recommended", False)
-                category = meta.get("category", "English" if lang.startswith("en") else ("Urdu & South Asian" if lang.startswith("hi") or lang.startswith("ur") else "Other Languages"))
+            # Match curated metadata by voice name or ID
+            meta = {}
+            for key, val in CURATED_VOICE_META.items():
+                if key.lower() == vname.lower() or key.lower() in vid.lower():
+                    meta = val
+                    break
 
-                voices.append({
-                    "id": name,
-                    "name": name,
-                    "display_name": display_name,
-                    "language": meta.get("language", lang),
-                    "locale": meta.get("locale", lang),
-                    "gender": gender,
-                    "is_recommended": is_recommended,
-                    "category": category,
-                    "sample_url": f"/api/voices/preview?voice={name}",
-                })
-        except Exception as exc:
-            logger.warning("Could not list macOS voices via say: %s", exc)
+            display_name = meta.get("display_name") or f"{vname} ({lang_code})"
+            gender = meta.get("gender") or str(getattr(v, "gender", "Unknown")).replace("VoiceGender", "")
+            if gender in ("Unknown", "None", ""):
+                gender = (
+                    "Female"
+                    if any(
+                        w in vname.lower()
+                        for w in (
+                            "alice", "alva", "anna", "amelie", "carmit",
+                            "karen", "lekha", "moira", "samantha", "tessa", "kathy"
+                        )
+                    )
+                    else "Male"
+                )
 
-    # 2. Fallback to pyttsx3 if no voices found or non-macOS
-    if not voices:
-        try:
-            import pyttsx3
-            engine = pyttsx3.init()
-            py_voices = engine.getProperty("voices")
-            for v in py_voices:
-                vid = str(v.id)
-                vname = str(v.name)
-                langs = getattr(v, "languages", [])
-                lang_code = langs[0] if langs else "en_US"
+            is_recommended = meta.get("is_recommended", False)
+            category = meta.get("category")
+            if not category:
+                if any(x in lang_code for x in ("hi", "ur", "pa")) or any(x in vid.lower() for x in ("hi-in", "lekha")):
+                    category = "Urdu & South Asian"
+                elif any(x in lang_code for x in ("en", "us", "gb", "au", "in")):
+                    category = "English"
+                else:
+                    category = "Other Languages"
 
-                meta = CURATED_VOICE_META.get(vname, {})
-                display_name = meta.get("display_name", f"{vname} ({lang_code})")
-                gender = meta.get("gender") or str(getattr(v, "gender", "Unknown")).replace("VoiceGender", "")
-                is_recommended = meta.get("is_recommended", False)
-
-                voices.append({
-                    "id": vid,
-                    "name": vname,
-                    "display_name": display_name,
-                    "language": meta.get("language", str(lang_code)),
-                    "locale": meta.get("locale", str(lang_code)),
-                    "gender": gender,
-                    "is_recommended": is_recommended,
-                    "category": meta.get("category", "General"),
-                    "sample_url": f"/api/voices/preview?voice={vid}",
-                })
-        except Exception as exc:
-            logger.error("Could not enumerate pyttsx3 voices: %s", exc)
+            voices.append({
+                "id": vid,
+                "name": vname,
+                "display_name": display_name,
+                "language": meta.get("language", str(lang_code)),
+                "locale": meta.get("locale", str(lang_code)),
+                "gender": gender,
+                "is_recommended": is_recommended,
+                "category": category,
+                "sample_url": f"/api/voices/preview?voice={vname}",
+            })
+    except Exception as exc:
+        logger.error("Could not enumerate pyttsx3 voices: %s", exc)
 
     # Sort recommended voices first, then alphabetically by category and name
     voices.sort(key=lambda x: (not x["is_recommended"], x["category"], x["name"]))
@@ -229,9 +261,60 @@ def strip_markdown_for_tts(text: str) -> str:
     return s
 
 
+def _synthesize_with_pyttsx3(voice_id: Optional[str], text: str, temp_raw: Path) -> bool:
+    """
+    Synthesize audio using pyttsx3.
+    On macOS, pyttsx3 uses AppKit's NSSpeechSynthesizer. Pumping the NSRunLoop until
+    synthesis finishes ensures 100% complete audio output for utterances of any length.
+    On other platforms (Windows/Linux), standard pyttsx3 save_to_file and runAndWait are used.
+    """
+    # 1. On macOS (in-process pyttsx3 NSSS engine driver)
+    try:
+        from AppKit import NSSpeechSynthesizer
+        from Foundation import NSURL, NSRunLoop, NSDefaultRunLoopMode, NSDate
+
+        synth = (
+            NSSpeechSynthesizer.alloc().initWithVoice_(voice_id)
+            if voice_id
+            else NSSpeechSynthesizer.alloc().init()
+        )
+        synth.setRate_(160)
+        url = NSURL.fileURLWithPath_(str(temp_raw))
+        temp_raw.unlink(missing_ok=True)
+        synth.startSpeakingString_toURL_(text, url)
+
+        runloop = NSRunLoop.currentRunLoop()
+        deadline = time.time() + 30.0
+        while synth.isSpeaking() and time.time() < deadline:
+            runloop.runMode_beforeDate_(NSDefaultRunLoopMode, NSDate.dateWithTimeIntervalSinceNow_(0.05))
+
+        if temp_raw.exists() and temp_raw.stat().st_size > 1024:
+            return True
+    except Exception as exc:
+        logger.debug("Direct AppKit pyttsx3 synthesis exception: %s", exc)
+
+    # 2. Standard pyttsx3 engine fallback
+    try:
+        import pyttsx3
+        engine = pyttsx3.init()
+        engine.setProperty("rate", 160)
+        if voice_id:
+            try:
+                engine.setProperty("voice", voice_id)
+            except Exception:
+                pass
+        temp_raw.unlink(missing_ok=True)
+        engine.save_to_file(text, str(temp_raw))
+        engine.runAndWait()
+        return temp_raw.exists() and temp_raw.stat().st_size > 1024
+    except Exception as exc:
+        logger.error("Standard pyttsx3 save_to_file failed: %s", exc)
+        return False
+
+
 def synthesize_sample(voice: str, text: Optional[str] = None) -> Tuple[Path, str, int]:
     """
-    Synthesize audio for a given voice and sample text.
+    Synthesize audio using pyttsx3 for a given voice and sample text.
     Returns (file_path, audio_url, duration_ms).
     Uses caching so repeated requests return instantaneously.
     """
@@ -256,59 +339,26 @@ def synthesize_sample(voice: str, text: Optional[str] = None) -> Tuple[Path, str
 
         temp_raw = SAMPLES_DIR / f"temp_{safe_voice}_{text_hash}.aiff"
 
-        # Attempt 1: Native macOS 'say' command (highest audio quality & perfect pronunciation)
-        if _is_say_available():
-            try:
-                cmd = ["say", "-v", voice, "-o", str(temp_raw), sample_text]
-                subprocess.run(cmd, check=True, timeout=15)
+        # Resolve pyttsx3 voice ID
+        engine = pyttsx3.init()
+        voice_id = _resolve_pyttsx3_voice(engine, voice)
 
-                if temp_raw.exists() and temp_raw.stat().st_size > 1024:
-                    segment = AudioSegment.from_file(str(temp_raw))
-                    segment.export(str(out_path), format="wav")
-                    temp_raw.unlink(missing_ok=True)
-                    elapsed = round((time.perf_counter() - started) * 1000)
-                    return out_path, audio_url, elapsed
-            except Exception as exc:
-                logger.warning("say command failed for voice '%s': %s; trying pyttsx3", voice, exc)
-                temp_raw.unlink(missing_ok=True)
+        # Synthesize via pyttsx3
+        ok = _synthesize_with_pyttsx3(voice_id, sample_text, temp_raw)
+        if not ok:
+            # Fallback to Lekha or Samantha
+            fallback_id = _resolve_pyttsx3_voice(engine, "Lekha") or _resolve_pyttsx3_voice(engine, "Samantha")
+            ok = _synthesize_with_pyttsx3(fallback_id, sample_text, temp_raw)
 
-        # Attempt 2: pyttsx3 fallback
-        try:
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.setProperty("rate", 150)
-            try:
-                engine.setProperty("voice", voice)
-            except Exception:
-                logger.warning("Could not set voice property to '%s'", voice)
-
-            engine.save_to_file(sample_text, str(temp_raw))
-            engine.runAndWait()
-
-            if temp_raw.exists() and temp_raw.stat().st_size > 4096:
-                segment = AudioSegment.from_file(str(temp_raw))
-                segment.export(str(out_path), format="wav")
-                temp_raw.unlink(missing_ok=True)
-                elapsed = round((time.perf_counter() - started) * 1000)
-                return out_path, audio_url, elapsed
-            else:
-                # If voice failed, try fallback voice Lekha or Samantha
-                engine.setProperty("voice", "Lekha")
-                engine.save_to_file(sample_text, str(temp_raw))
-                engine.runAndWait()
-                if temp_raw.exists() and temp_raw.stat().st_size > 1024:
-                    segment = AudioSegment.from_file(str(temp_raw))
-                    segment.export(str(out_path), format="wav")
-                    temp_raw.unlink(missing_ok=True)
-                    elapsed = round((time.perf_counter() - started) * 1000)
-                    return out_path, audio_url, elapsed
-        except Exception as exc:
-            logger.error("TTS synthesis failed completely for '%s': %s", voice, exc)
+        if ok and temp_raw.exists() and temp_raw.stat().st_size > 1024:
+            segment = AudioSegment.from_file(str(temp_raw))
+            segment.export(str(out_path), format="wav")
             temp_raw.unlink(missing_ok=True)
-            raise RuntimeError(f"Could not generate voice preview for '{voice}': {exc}")
+            elapsed = round((time.perf_counter() - started) * 1000)
+            return out_path, audio_url, elapsed
 
-    if not out_path.exists():
-        raise RuntimeError(f"Failed to generate voice preview for voice '{voice}'")
+    if not out_path.exists() or out_path.stat().st_size <= 1024:
+        raise RuntimeError(f"Failed to generate audio with pyttsx3 for voice '{voice}'")
 
     elapsed = round((time.perf_counter() - started) * 1000)
     return out_path, audio_url, elapsed

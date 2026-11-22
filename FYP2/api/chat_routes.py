@@ -54,7 +54,6 @@ def create_message(session_id: int, request: chat_models.MessageCreateRequest, e
 
 
 @router.post("/{session_id}/text", response_model=chat_models.TextChatResponse)
-@router.post("/chat/{session_id}/text", response_model=chat_models.TextChatResponse)
 async def handle_text_message(
     session_id: int,
     request: chat_models.TextChatRequest,

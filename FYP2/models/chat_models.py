@@ -31,7 +31,7 @@ class TextChatRequest(BaseModel):
     message_text: Optional[str] = None
     student_id: Optional[str] = None
     emotion: Optional[str] = "Neutral"
-    generate_audio: Optional[bool] = False
+    generate_audio: Optional[bool] = True
 
 class TextChatResponse(BaseModel):
     user_text: str
