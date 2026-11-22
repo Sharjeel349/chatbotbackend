@@ -1023,15 +1023,20 @@ def handle_student_details_node(state: AdvisorState) -> dict[str, Any]:
 
 
 def handle_course_drop_policy_node(state: AdvisorState) -> dict[str, Any]:
-    """Provide the official BIIT / HEC course drop and withdrawal policy."""
+    """Retrieve and provide the official BIIT / HEC course drop and withdrawal policy dynamically from ChromaDB RAG."""
+    from FYP2.services.voice_service import retrieve_knowledge
+
+    query = state.get("query") or "Course drop and withdrawal policy"
+    rag_knowledge = retrieve_knowledge(query)
+
     language = state.get("language", "english")
     emotion = (state.get("emotion") or "").lower()
-    query = (state.get("query") or "").lower()
+    query_lower = query.lower()
 
     is_stressed = any(
         s in emotion for s in ["stress", "anxious", "frustrat", "sad", "fear", "panic", "overwhelm"]
     ) or any(
-        s in query for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared"]
+        s in query_lower for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared"]
     )
 
     prefix_ur = "Pareshan mat hon! " if is_stressed else ""
@@ -1054,19 +1059,24 @@ def handle_course_drop_policy_node(state: AdvisorState) -> dict[str, Any]:
             "- **Minimum Semester Credit Ceiling**: A student cannot drop courses that reduce their registered semester load below the mandatory minimum of **15 credit hours**."
         )
 
-    return {"response": reply}
+    return {"response": reply, "knowledge": rag_knowledge}
 
 
 def handle_semester_freeze_policy_node(state: AdvisorState) -> dict[str, Any]:
-    """Provide the official BIIT / HEC semester freeze policy."""
+    """Retrieve and provide the official BIIT / HEC semester freeze policy dynamically from ChromaDB RAG."""
+    from FYP2.services.voice_service import retrieve_knowledge
+
+    query = state.get("query") or "Semester freeze policy"
+    rag_knowledge = retrieve_knowledge(query)
+
     language = state.get("language", "english")
     emotion = (state.get("emotion") or "").lower()
-    query = (state.get("query") or "").lower()
+    query_lower = query.lower()
 
     is_stressed = any(
         s in emotion for s in ["stress", "anxious", "frustrat", "sad", "fear", "panic", "overwhelm"]
     ) or any(
-        s in query for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared"]
+        s in query_lower for s in ["stress", "stressed", "anxious", "anxiety", "tension", "pareshan", "worried", "scared"]
     )
 
     prefix_ur = "Pareshan mat hon! " if is_stressed else ""
@@ -1089,7 +1099,7 @@ def handle_semester_freeze_policy_node(state: AdvisorState) -> dict[str, Any]:
             "- **Application Deadline**: Applications must be submitted to the Academic Department / Director's Office within the first **2 weeks** of the semester after clearing all financial dues and paying the freeze fee."
         )
 
-    return {"response": reply}
+    return {"response": reply, "knowledge": rag_knowledge}
 
 
 def handle_teacher_strictness_node(state: AdvisorState) -> dict[str, Any]:
